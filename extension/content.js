@@ -141,6 +141,7 @@
     partner: null, // presencia de la otra pestaña emparejada, o null
     appliedFor: null, // videoId de pareja para el que ya auto-sincronicé
     best: null, // mejor desfase disponible { low, high, delta, source }, o null
+    appliedDelta: null, // último delta que esta pestaña aplicó (para detectar cambios)
     mismatch: false, // hay otra pestaña pero de tipo distinto (VOD vs directo)
     suppressUntil: 0, // ignora 'seeked' propios (de applyDelta) hasta este instante
     suppressPlayUntil: 0, // ignora 'play'/'pause' propios (de la sync) hasta este instante
@@ -297,7 +298,7 @@
     if (!me || !sync.partner) return null;
 
     const rec = await loadPairRecord();
-    if (rec) return { ...rec, source: "guardado" };
+    if (rec) return { ...rec, source: rec.source || "guardado" };
 
     const myStart = getStartMs();
     const pStart = sync.partner.startMs;
@@ -410,28 +411,37 @@
     } catch (_) {}
     sync.best = null;
     sync.appliedFor = null; // permite re-aplicar la nueva estimación
+    sync.appliedDelta = null;
     toast("Sync guardado borrado · usando estimación por inicio", 4000);
     syncTick(); // recalcula (será 'inicio') y reaplica
   }
 
-  /** Tras emparejar, auto-sincroniza una vez con el mejor desfase disponible. */
+  /**
+   * Auto-sincroniza con el mejor desfase disponible. Reaplica cuando aparece una
+   * pareja nueva o cuando el desfase cambia (p. ej. el audio mejora la estimación).
+   */
   async function maybeAutoSync() {
     if (!sync.partner) return;
-    if (sync.appliedFor === sync.partner.videoId) return; // ya hecho para esta pareja
     const d = await bestDelta();
     if (!d) return;
+    const samePartner = sync.appliedFor === sync.partner.videoId;
+    const deltaChanged = sync.appliedDelta == null || Math.abs(d.delta - sync.appliedDelta) > 0.25;
+    if (samePartner && !deltaChanged) return;
+
     sync.appliedFor = sync.partner.videoId;
+    sync.appliedDelta = d.delta;
     // Solo la pestaña "seguidora" (videoId mayor) se mueve; el ancla se queda.
     if (currentVideoId() !== d.high) {
       renderSync();
       return;
     }
-    applyDelta(
-      d,
-      d.source === "inicio"
+    const label =
+      d.source === "audio"
+        ? "Sincronizado por audio 🔊"
+        : d.source === "inicio"
         ? `Estimado por hora de inicio (Δ ${d.delta.toFixed(0)}s)`
-        : "Sincronizado automáticamente ✨"
-    );
+        : "Sincronizado automáticamente ✨";
+    applyDelta(d, label);
     renderSync();
   }
 
@@ -580,7 +590,12 @@
       return;
     }
     const best = sync.best;
-    if (best && best.source === "guardado") {
+    if (best && best.source === "audio") {
+      els.applySync.disabled = false;
+      els.forget.style.display = "block";
+      els.syncStatus.textContent = "🔊 por audio (Δ " + best.delta.toFixed(1) + "s)";
+      els.syncStatus.className = "ytds-sync-status paired saved";
+    } else if (best && best.source === "guardado") {
       els.applySync.disabled = false;
       els.forget.style.display = "block";
       els.syncStatus.textContent = "🔗 guardado (Δ " + best.delta.toFixed(1) + "s)";
@@ -768,6 +783,7 @@
     state.mode = null;
     sync.partner = null;
     sync.appliedFor = null;
+    sync.appliedDelta = null;
     sync.best = null;
     sync.mismatch = false;
     if (els.badge) {

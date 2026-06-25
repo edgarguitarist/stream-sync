@@ -167,10 +167,25 @@ chrome.action.onClicked.addListener(async (tab) => {
       );
       return;
     }
-    notify(
-      tab.id,
-      `🔊 residual ${out.residual.toFixed(2)}s · conf ${out.confidence.toFixed(2)} · solape ${out.overlap.toFixed(1)}s · Δinicio ${out.deltaInicio.toFixed(1)} → Δcorr ${out.deltaCorr.toFixed(1)}s`
-    );
+
+    // Confianza suficiente → guardar el desfase validado por audio. Las pestañas
+    // lo recogen de la pizarra y lo aplican solas (source 'audio').
+    if (out.confidence >= 0.25) {
+      const key = `ytds:pair:${out.low}|${out.high}`;
+      await chrome.storage.local.set({
+        [key]: { low: out.low, high: out.high, delta: out.deltaCorr, savedAt: Date.now(), source: "audio" },
+      });
+      clips = []; // listo para una próxima ronda
+      notify(
+        tab.id,
+        `✓ Sincronizado por audio · Δ ${out.deltaCorr.toFixed(1)}s · conf ${out.confidence.toFixed(2)}. Dale play a ambos.`
+      );
+    } else {
+      notify(
+        tab.id,
+        `🔊 conf baja (${out.confidence.toFixed(2)}) · Δcorr ${out.deltaCorr.toFixed(1)}s · solape ${out.overlap.toFixed(1)}s. No lo aplico; reintenta más cuadrado.`
+      );
+    }
   } catch (e) {
     notify(tab.id, "✗ Captura falló: " + String((e && e.message) || e));
   }

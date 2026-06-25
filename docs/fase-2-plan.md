@@ -112,7 +112,18 @@ extension/
 - Por ahora el SW solo **reporta** `Δ calculado` en un toast (no aplica). Cuando el
   signo esté calibrado, conectar a `applyDelta` + `saveSync`.
 
-### Pendiente
+### Paso 3 — congelar + aplicar ✅ (funcional, a pulir)
 
-- Aplicar automáticamente el `Δ` validado por audio (reemplaza estimación/guardado malo).
+- **Congelamiento**: al capturar una pestaña, se pausa a la pareja (vía el canal de
+  comandos) para que no avance; así ambos clips cubren el mismo punto del evento.
+  Verificado: solape pasó de −6 s a +10 s, confianza de 0.03 a 0.38.
+- **Aplicación**: con `confidence ≥ 0.25` el SW guarda `{low,high,delta,source:'audio'}`
+  en la pizarra; las pestañas lo recogen (`bestDelta`) y `maybeAutoSync` lo reaplica
+  al detectar el cambio de delta. Signo calibrado (Δcorr 40.0 ≈ ajuste manual 39.9).
+
+### Pendiente / a pulir
+
+- Subir la confianza (clips más largos / mejor ventana de voz) — 0.38 funciona pero
+  hay margen. Quizá refinar el residual con interpolación parabólica del pico.
+- Migrar `ScriptProcessorNode` → `AudioWorkletNode` (solo es un warning, no rompe).
 - Mantener vivo el SW entre los dos clics (o persistir el primer clip) por si se duerme.
