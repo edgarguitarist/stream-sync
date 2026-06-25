@@ -17,23 +17,21 @@ la acción). De ahí:
 
 ---
 
-## 1. Cuadre por imagen (visual sync)
+## 1. Cuadre por imagen (visual sync) — ✅ prototipo en Node
 
-Sincronizar por el **video** además del audio, útil cuando comparten POV idéntico,
-hay un **timer/HUD** en pantalla, o el audio no basta (música distinta, sin voces).
+Implementado en `tools/visual.mjs` + `visual-probe.mjs`: descarga video de baja
+resolución con `yt-dlp`, extrae una señal de **actividad** (diferencia entre frames)
+con `ffmpeg` y la cross-correlaciona con el mismo `estimateLag`.
 
-Dos enfoques:
+Verificado: funciona cuando los POV **comparten contenido visual** (bici → Δ46,
+conf 0.36, correcto) pero NO con POV independientes (casino → Δ35.2, conf 0.28,
+incorrecto). La confianza visual sola no distingue → combinar con audio y fiarse de
+donde coincidan.
 
-- **OCR de timer** (preciso cuando hay reloj numérico): localizar el timer en cada
-  stream, leerlo con OCR (p. ej. `tesseract.js`) y restar → desfase exacto al
-  centésimo. Reto: ubicar el timer (config manual de la zona, o detección).
-- **Correlación de frames** (POV compartido): capturar frames y alinear por
-  similitud (template matching / hash perceptual). Más costoso y menos exacto.
-
-Reto común: el `<video>` de YouTube es cross-origin → un `<canvas>` que lo dibuje
-queda *tainted* y no deja leer píxeles (mismo muro CORS que el audio). Habría que
-capturar el **video** con `tabCapture` (`chromeMediaSource: 'tab'` da video+audio)
-y leer los frames de ese stream.
+Pendiente de precisión: **OCR de timer** para juegos con reloj numérico (exacto al
+centésimo); requiere ubicar el timer + lib de OCR (`tesseract.js`). En el navegador,
+capturar frames necesitaría `tabCapture` de video (el `<canvas>` del `<video>` de
+YouTube queda *tainted* por CORS).
 
 ## 2. Migrar a AudioWorklet (limpieza)
 

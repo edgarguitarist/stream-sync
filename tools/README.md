@@ -38,8 +38,34 @@ Salida: JSON con `delta` (cuánto va A por delante de B, en segundos), `confiden
 | Casino (Yh5… / Vq8…) | 39.6 s | 0.20 | 39.9 s (manual) |
 | Bici (1EC… / a3Z…) | 45.6 s | 0.26 | 45.5 s (manual) |
 
+## Sync por imagen (`visual-probe.mjs`)
+
+Prototipo que correlaciona **actividad visual** (diferencia media entre frames,
+con `ffmpeg`) en vez de audio — reutiliza el mismo `estimateLag`.
+
+```bash
+node tools/visual-probe.mjs <urlA> <urlB> --pos 800 --win 60 --align
+```
+
+**Cuándo funciona** (verificado):
+
+| Par | Δ visual | conf | ¿Correcto? |
+|---|---|---|---|
+| Bici (POV del mismo juego/eventos) | 46.0 s | 0.36 | ✓ (audio 45.6) |
+| Casino (cada uno en su sala) | 35.2 s | 0.28 | ✗ (verdad 39.6) |
+
+Conclusión: el sync por imagen **solo sirve si los dos POV comparten contenido
+visual** (misma vista, o eventos sincronizados tipo co-op). Con POV independientes
+da un pico espurio con confianza parecida, así que **la confianza visual sola no es
+fiable** para decidir. Estrategia robusta: combinar audio + imagen y **fiarse de
+donde coincidan** (o de la mayor confianza). Para juegos con **timer numérico**
+visible, lo preciso sería OCR del timer (pendiente; requiere ubicar el timer + lib
+de OCR).
+
 ## Archivos
 
-- `sync-probe.mjs` — CLI principal.
+- `sync-probe.mjs` — CLI de sync por audio.
+- `visual-probe.mjs` / `visual.mjs` — sync por imagen (actividad de frames).
+- `sync.mjs` — `computeSync` (audio), reutilizado por CLI y backend del sitio.
 - `ytaudio.mjs` — descarga de secciones de audio + metadatos (`yt-dlp`), con reintentos.
 - `wav.mjs` — lector de WAV → Float32Array mono.
