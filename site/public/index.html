@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>YT Dual Sync</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="bar">
+      <h1>YT Dual Sync</h1>
+      <input id="urlA" class="url" placeholder="URL del video/directo A" />
+      <input id="urlB" class="url" placeholder="URL del video/directo B" />
+      <label class="pos">pos <input id="pos" type="number" value="600" min="0" /> s</label>
+      <button id="sync" class="primary">Sincronizar</button>
+    </header>
+
+    <div id="status" class="status">Pega dos URLs de YouTube del mismo evento (dos POV) y pulsa Sincronizar.</div>
+
+    <main id="stage" class="stage" hidden>
+      <section class="cell">
+        <div class="vidwrap"><div id="playerA"></div></div>
+        <div class="vidlabel">A <button class="mute" data-mute="A" title="Silenciar A">🔊</button></div>
+      </section>
+      <section class="cell">
+        <div class="vidwrap"><div id="playerB"></div></div>
+        <div class="vidlabel">B <button class="mute" data-mute="B" title="Silenciar B">🔊</button></div>
+      </section>
+    </main>
+
+    <footer id="controls" class="controls" hidden>
+      <button id="playpause" class="primary">▶ Reproducir</button>
+      <input id="seek" class="seek" type="range" min="0" max="100" value="0" step="0.1" />
+      <span id="time" class="time">0:00 / 0:00</span>
+      <span class="delta">Δ <b id="deltaVal">0.0</b>s
+        <button class="nudge" data-nudge="-0.5">−0.5</button>
+        <button class="nudge" data-nudge="0.5">+0.5</button>
+        <button id="resync" class="ghost" title="Recalcular por audio en la posición actual">♺ audio</button>
+      </span>
+    </footer>
+
+    <script src="app.js"></script>
+  </body>
+</html>
