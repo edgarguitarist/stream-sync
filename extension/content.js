@@ -334,25 +334,30 @@
    */
   function captureTest() {
     toast(
-      "Para capturar, pulsa el ícono de YT Dual Sync ↗ en la barra de Chrome (el video debe estar sonando).",
-      6000
+      "Auto-sync por audio: pulsa el ícono de YT Dual Sync ↗ en la barra en ESTA pestaña y luego en la OTRA, con ambos videos sonando.",
+      7000
     );
   }
 
-  // Resultado de la captura disparada desde el ícono (lo envía background.js).
+  // Mensajería con el service worker (Fase 2): muestra avisos y entrega el estado
+  // (posición/modo) que el SW necesita para correlacionar el audio.
   if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage) {
-    chrome.runtime.onMessage.addListener((msg) => {
-      if (!msg || msg.type !== "ytds-capture-result") return;
-      if (!msg.ok) {
-        toast("✗ Captura falló: " + (msg.error || "?"), 6000);
+    chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+      if (!msg) return;
+      if (msg.type === "ytds-msg") {
+        toast(msg.text, 6000);
         return;
       }
-      const heard = msg.rms > 0.0005;
-      toast(
-        (heard ? "✓ Audio OK" : "⚠ Silencio (¿pestaña muteada?)") +
-          ` · ${msg.samples} muestras @ ${msg.sampleRate}Hz · rms ${msg.rms.toFixed(4)}`,
-        6000
-      );
+      if (msg.type === "ytds-get-state") {
+        const v = getVideo();
+        sendResponse({
+          videoId: currentVideoId(),
+          currentTime: v ? v.currentTime : null,
+          mode: state.mode,
+          startMs: getStartMs(),
+        });
+        return true; // respuesta (posible) asíncrona
+      }
     });
   }
 
@@ -423,7 +428,7 @@
         <div class="ytds-sync">
           <div class="ytds-sync-status" data-syncstatus>buscando segunda pestaña…</div>
           <button class="ytds-applysync" data-applysync title="Reaplicar el desfase guardado de este par">✨ Re-sincronizar</button>
-          <button class="ytds-captest" data-captest title="Diagnóstico Fase 2: captura 3 s del audio de ESTA pestaña (debe estar sonando)">🎧 Probar captura de audio</button>
+          <button class="ytds-captest" data-captest title="Auto-sync por audio: se dispara desde el ícono de la extensión en cada pestaña">🎧 Auto-sync por audio</button>
         </div>
         <p class="ytds-hint" data-hint></p>
       </div>

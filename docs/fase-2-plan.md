@@ -100,10 +100,19 @@ extension/
   por pestaña → para VOD, capturar SECUENCIAL (invocar el ícono en cada pestaña), no
   simultáneo. El SW acumula ambos clips y correlaciona cuando tiene los dos.
 
+### Paso 2 — captura de 2 pestañas + correlación ⏳ (a probar/calibrar)
+
+- Disparo secuencial: ícono en cada pestaña. El SW guarda un clip por `videoId`
+  (8 s submuestreados a 8 kHz) junto con la posición de captura (la pide al content
+  script con `ytds-get-state`). Con dos clips de videos distintos, correlaciona.
+- `computeDelta(a, b, lag)` combina el lag de audio con las posiciones de captura
+  para obtener `Δ = pos(high) − pos(low)`. **El signo se calibra contra el ground
+  truth (~41 s del par de prueba)** — puede haber que invertir `lagSeconds`.
+- Umbral de confianza `< 0.15` → avisa "audio no coincide" en vez de aplicar basura.
+- Por ahora el SW solo **reporta** `Δ calculado` en un toast (no aplica). Cuando el
+  signo esté calibrado, conectar a `applyDelta` + `saveSync`.
+
 ### Pendiente
 
-- Identificar el `tabId` de la pareja (buscar por `videoId` con `chrome.tabs.query`).
-- Captura de AMBAS pestañas (secuencial para VOD: posicionar, reproducir, capturar
-  ~8 s de cada una). Resampleo a 16 kHz.
-- `estimateLag` sobre los dos clips → `{ lagSeconds, confidence }`.
-- Umbral de confianza: aplicar y `saveSync()` si supera; si no, avisar "no coincide".
+- Aplicar automáticamente el `Δ` validado por audio (reemplaza estimación/guardado malo).
+- Mantener vivo el SW entre los dos clics (o persistir el primer clip) por si se duerme.

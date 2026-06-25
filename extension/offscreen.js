@@ -6,18 +6,51 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || msg.target !== "offscreen") return;
 
   if (msg.type === "capture") {
-    capturePcm(msg.streamId, msg.ms || 3000)
+    capturePcm(msg.streamId, msg.ms || 3000, msg.targetRate || 8000)
       .then(sendResponse)
       .catch((e) => sendResponse({ error: String((e && e.message) || e) }));
     return true; // respuesta asíncrona
   }
 });
 
+/** Concatena los chunks en un solo Float32Array. */
+function concat(chunks) {
+  let total = 0;
+  for (const c of chunks) total += c.length;
+  const out = new Float32Array(total);
+  let o = 0;
+  for (const c of chunks) {
+    out.set(c, o);
+    o += c.length;
+  }
+  return out;
+}
+
+/** Submuestrea por promediado de bloques (anti-alias básico) a `toRate`. */
+function downsample(full, fromRate, toRate) {
+  if (toRate >= fromRate) return full;
+  const ratio = fromRate / toRate;
+  const outLen = Math.floor(full.length / ratio);
+  const out = new Float32Array(outLen);
+  for (let i = 0; i < outLen; i++) {
+    const start = Math.floor(i * ratio);
+    const end = Math.floor((i + 1) * ratio);
+    let s = 0, n = 0;
+    for (let j = start; j < end && j < full.length; j++) {
+      s += full[j];
+      n++;
+    }
+    out[i] = n ? s / n : 0;
+  }
+  return out;
+}
+
 /**
- * Captura `ms` ms de audio del stream de pestaña y devuelve métricas del PCM.
- * @returns {Promise<{samples:number, sampleRate:number, rms:number, peak:number, durationMs:number}>}
+ * Captura `ms` ms de audio de la pestaña, lo submuestrea a `targetRate` y
+ * devuelve las muestras (como Array para poder serializarlas por mensaje).
+ * @returns {Promise<{samples:number[], sampleRate:number, rms:number, count:number, durationMs:number}>}
  */
-async function capturePcm(streamId, ms) {
+async function capturePcm(streamId, ms, targetRate) {
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: {
       mandatory: {
@@ -48,19 +81,20 @@ async function capturePcm(streamId, ms) {
   proc.disconnect();
   src.disconnect();
   stream.getTracks().forEach((t) => t.stop());
-  const sampleRate = ctx.sampleRate;
+  const fromRate = ctx.sampleRate;
   await ctx.close();
 
-  let count = 0, sumSq = 0, peak = 0;
-  for (const c of chunks) {
-    for (let i = 0; i < c.length; i++) {
-      const v = c[i];
-      sumSq += v * v;
-      const a = Math.abs(v);
-      if (a > peak) peak = a;
-      count++;
-    }
-  }
-  const rms = count ? Math.sqrt(sumSq / count) : 0;
-  return { samples: count, sampleRate, rms, peak, durationMs: ms };
+  const full = concat(chunks);
+  let sumSq = 0;
+  for (let i = 0; i < full.length; i++) sumSq += full[i] * full[i];
+  const rms = full.length ? Math.sqrt(sumSq / full.length) : 0;
+
+  const ds = downsample(full, fromRate, targetRate);
+  return {
+    samples: Array.from(ds),
+    sampleRate: Math.min(targetRate, fromRate),
+    rms,
+    count: full.length,
+    durationMs: ms,
+  };
 }
