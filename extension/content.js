@@ -368,6 +368,22 @@
     return applyDelta(d, d.source === "inicio" ? "Estimado por hora de inicio ✨" : "Re-sincronizado ✨");
   }
 
+  /**
+   * Borra el desfase guardado de este par (p. ej. uno malo) y vuelve a la
+   * estimación por hora de inicio, que se reaplica de inmediato.
+   */
+  async function forgetSync() {
+    const me = currentVideoId();
+    if (!me || !sync.partner || !storageOk()) return;
+    try {
+      await chrome.storage.local.remove(pairKey(me, sync.partner.videoId));
+    } catch (_) {}
+    sync.best = null;
+    sync.appliedFor = null; // permite re-aplicar la nueva estimación
+    toast("Sync guardado borrado · usando estimación por inicio", 4000);
+    syncTick(); // recalcula (será 'inicio') y reaplica
+  }
+
   /** Tras emparejar, auto-sincroniza una vez con el mejor desfase disponible. */
   async function maybeAutoSync() {
     if (!sync.partner) return;
@@ -428,6 +444,7 @@
         <div class="ytds-sync">
           <div class="ytds-sync-status" data-syncstatus>buscando segunda pestaña…</div>
           <button class="ytds-applysync" data-applysync title="Reaplicar el desfase guardado de este par">✨ Re-sincronizar</button>
+          <button class="ytds-forget" data-forget title="Borrar el desfase guardado de este par y volver a la estimación por hora de inicio">🗑 Olvidar sync guardado</button>
           <button class="ytds-captest" data-captest title="Auto-sync por audio: se dispara desde el ícono de la extensión en cada pestaña">🎧 Auto-sync por audio</button>
         </div>
         <p class="ytds-hint" data-hint></p>
@@ -456,10 +473,12 @@
       hint: panel.querySelector("[data-hint]"),
       syncStatus: panel.querySelector("[data-syncstatus]"),
       applySync: panel.querySelector("[data-applysync]"),
+      forget: panel.querySelector("[data-forget]"),
       capTest: panel.querySelector("[data-captest]"),
     };
 
     els.applySync.addEventListener("click", () => applySync());
+    els.forget.addEventListener("click", () => forgetSync());
     els.capTest.addEventListener("click", captureTest);
 
     document.body.appendChild(panel);
@@ -527,19 +546,23 @@
         els.syncStatus.className = "ytds-sync-status";
       }
       els.applySync.disabled = true;
+      els.forget.style.display = "none";
       return;
     }
     const best = sync.best;
     if (best && best.source === "guardado") {
       els.applySync.disabled = false;
+      els.forget.style.display = "block";
       els.syncStatus.textContent = "🔗 guardado (Δ " + best.delta.toFixed(1) + "s)";
       els.syncStatus.className = "ytds-sync-status paired saved";
     } else if (best && best.source === "inicio") {
       els.applySync.disabled = false;
+      els.forget.style.display = "none";
       els.syncStatus.textContent = "🔗 estimado por inicio (Δ " + best.delta.toFixed(0) + "s)";
       els.syncStatus.className = "ytds-sync-status paired saved";
     } else {
       els.applySync.disabled = true;
+      els.forget.style.display = "none";
       els.syncStatus.textContent = "🔗 emparejado · cuadra y se guarda solo";
       els.syncStatus.className = "ytds-sync-status paired";
     }
