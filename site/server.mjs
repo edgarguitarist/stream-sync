@@ -64,13 +64,16 @@ function handleSync(req, res) {
     try { data = JSON.parse(body); } catch {
       return sendJson(400, { error: "JSON inválido" });
     }
-    const idA = ytId(data.urlA || "");
-    const idB = ytId(data.urlB || "");
-    if (!/^[\w-]{11}$/.test(idA) || !/^[\w-]{11}$/.test(idB)) {
-      return sendJson(400, { error: "URLs de YouTube inválidas" });
+    // Acepta {urls:[...]} (N videos) o {urlA,urlB} (compatibilidad).
+    const urls = Array.isArray(data.urls) && data.urls.length
+      ? data.urls
+      : [data.urlA, data.urlB];
+    const ids = urls.map((u) => ytId(u || ""));
+    if (ids.length < 2 || ids.some((id) => !/^[\w-]{11}$/.test(id))) {
+      return sendJson(400, { error: "Hace falta al menos 2 URLs de YouTube válidas" });
     }
     // Trabajo pesado (descarga + FFT) en un proceso hijo: no bloquea el servidor.
-    const child = spawn("node", [JOB, idA, idB, String(Number(data.pos) || 600), String(Number(data.win) || 30)], {
+    const child = spawn("node", [JOB, ids.join(","), String(Number(data.pos) || 600), String(Number(data.win) || 30)], {
       cwd: __dir,
     });
     let out = "", err = "", done = false;

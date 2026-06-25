@@ -1,9 +1,13 @@
-# site — vista propia con ambos videos sincronizados
+# site — vista propia con N videos sincronizados
 
-Alternativa a la extensión: una página que carga **ambos videos en una sola
+Alternativa a la extensión: una página que carga **2 o más videos en una sola
 pestaña** y los sincroniza automáticamente. El desfase se calcula **en el servidor**
 (con `yt-dlp`, sin el muro CORS del navegador) y los videos se embeben con la
 **IFrame Player API** de YouTube, ya alineados.
+
+Soporta **N videos**: el primero es la **referencia** (su audio manda) y el resto
+se cuadran contra él, cada uno con su propio desfase. Grid dinámico (2 columnas
+hasta 4 videos, 3 a partir de 5).
 
 ## Por qué bypassa la extensión
 
@@ -24,11 +28,13 @@ site/
     style.css
 ```
 
-- `POST /api/sync {urlA, urlB, pos}` → `{ delta, confidence, startMs..., duration... }`.
-  El cálculo corre en un proceso hijo (`spawn`), así el servidor no se bloquea
-  durante la descarga (~30–60 s) ni muere si `yt-dlp` falla.
-- `app.js`: A es el **maestro**, B el **seguidor** en `t − delta`. Un bucle corrige
-  la deriva (>0.3 s) y refleja play/pausa. Botones de mute por video y nudge ±0.5 s.
+- `POST /api/sync {urls:[...], pos}` → `{ master, items:[{id, delta, confidence, ...}] }`
+  (también acepta `{urlA, urlB}` por compatibilidad). El cálculo corre en un proceso
+  hijo (`spawn`), así el servidor no se bloquea durante la descarga (~30–60 s) ni
+  muere si `yt-dlp` falla. `computeMulti` descarga el audio de la referencia una vez
+  y correlaciona cada otro contra él (`tools/sync.mjs`).
+- `app.js`: el video[0] es el **maestro**; cada video[i] sigue en `t − delta[i]`. Un
+  bucle corrige la deriva (>0.3 s) y refleja play/pausa a todos. Mute por video.
 
 ## Uso
 

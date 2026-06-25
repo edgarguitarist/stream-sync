@@ -8,6 +8,67 @@ import { readWavMono } from "./wav.mjs";
 import { downloadAudioSection, fetchMeta } from "./ytaudio.mjs";
 
 /**
+ * Sincroniza N videos contra el PRIMERO (la referencia). Para cada otro video
+ * devuelve `delta` = cuánto va la referencia por delante de él (cuando la
+ * referencia está en t, ese video debe estar en t − delta).
+ *
+ * Descarga el audio de la referencia una sola vez. Si se alinea por hora de
+ * inicio, elige la posición de la referencia para que TODAS las ventanas de los
+ * seguidores caigan en tiempos válidos (≥ pos) y se solapen.
+ *
+ * @returns {{master:string, posMaster:number, win:number, startMs:number|null,
+ *   duration:number|null, items:Array<{id,delta,confidence,lagSeconds,posF,startMs,duration}>}}
+ */
+export function computeMulti(o) {
+  const ids = o.ids;
+  const pos = o.pos != null ? o.pos : 600;
+  const win = o.win != null ? o.win : 30;
+  const rate = o.rate != null ? o.rate : 8000;
+  const align = o.align !== false;
+  const ownDir = !o.dir;
+  const dir = o.dir || mkdtempSync(join(tmpdir(), "ytds-multi-"));
+  try {
+    const master = ids[0];
+    const metas = ids.map((id) => (align ? fetchMeta(id) : null));
+    const startMaster = metas[0] && metas[0].startMs;
+    // Segundos que cada video empezó DESPUÉS de la referencia (0 si no se alinea).
+    const shifts = ids.map((_, i) =>
+      align && startMaster && metas[i] && metas[i].startMs ? (metas[i].startMs - startMaster) / 1000 : 0
+    );
+    const maxShift = Math.max(0, ...shifts);
+    const posMaster = pos + maxShift; // así toda posF = posMaster − shift ≥ pos
+
+    const M = readWavMono(downloadAudioSection(master, posMaster, win, rate, dir));
+    const items = [];
+    for (let i = 1; i < ids.length; i++) {
+      const posF = Math.max(0, posMaster - shifts[i]);
+      const F = readWavMono(downloadAudioSection(ids[i], posF, win, rate, dir));
+      const sr = Math.min(M.sampleRate, F.sampleRate);
+      const r = estimateLag(M.samples, F.samples, sr);
+      items.push({
+        id: ids[i],
+        delta: posMaster - posF - r.lagSeconds, // cuánto va la referencia por delante
+        confidence: r.confidence,
+        lagSeconds: r.lagSeconds,
+        posF,
+        startMs: metas[i] ? metas[i].startMs : null,
+        duration: metas[i] ? metas[i].duration : null,
+      });
+    }
+    return {
+      master, posMaster, win,
+      startMs: startMaster || null,
+      duration: metas[0] ? metas[0].duration : null,
+      items,
+    };
+  } finally {
+    if (ownDir) {
+      try { rmSync(dir, { recursive: true, force: true }); } catch (_) {}
+    }
+  }
+}
+
+/**
  * Descubre el desfase entre dos videos.
  *
  * delta = posA − posB − lagAudio  →  "cuánto va A por delante de B" (segundos):

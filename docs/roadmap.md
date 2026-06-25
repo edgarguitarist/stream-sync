@@ -33,6 +33,18 @@ centésimo); requiere ubicar el timer + lib de OCR (`tesseract.js`). En el naveg
 capturar frames necesitaría `tabCapture` de video (el `<canvas>` del `<video>` de
 YouTube queda *tainted* por CORS).
 
+## 1b. Soporte de directos EN VIVO (pendiente de probar)
+
+El algoritmo y la alineación por hora de inicio son los mismos para live y VOD; lo
+que cambia son las restricciones físicas del directo:
+
+- Solo se puede **retrasar** al que va adelante (no pasar del *live edge*).
+- Ambos necesitan **DVR** con ventana suficiente para el offset.
+- **Drift** en directos largos → re-sincronizar periódicamente (botón ♺ audio).
+- yt-dlp sobre un live en curso: el contenido crece; `pos` es relativo a la ventana
+  de DVR. Probar `--live-from-start` o targetear el live edge. Un modo "live" en el
+  banco/sitio queda pendiente. No probado aún (no había directos disponibles).
+
 ## 2. Migrar a AudioWorklet (limpieza)
 
 `offscreen.js` usa `ScriptProcessorNode` (deprecado → warning en `chrome://extensions`).
