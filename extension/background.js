@@ -7,11 +7,13 @@
 import { estimateLag } from "./lib/xcorr.js";
 
 const OFFSCREEN_URL = "offscreen.html";
-// Clips largos: la captura es secuencial y los videos avanzan entre un clic y
-// otro, así que cada clip debe ser más largo que esa separación para que las
-// dos ventanas de contenido se solapen.
-const CAPTURE_MS = 20000;
+// Congelamos (pausamos) la otra pestaña mientras capturamos esta, así ambos
+// clips cubren el mismo punto del contenido y se solapan. Con eso, clips
+// moderados bastan.
+const CAPTURE_MS = 12000;
 const TARGET_RATE = 8000; // Hz tras submuestrear (voz < 4 kHz)
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Últimos clips capturados, máximo uno por videoId.
 let clips = []; // { videoId, samples, rate, pos, startMs, mode, ts }
@@ -117,17 +119,24 @@ chrome.action.onClicked.addListener(async (tab) => {
   }
 
   try {
-    const state = await chrome.tabs.sendMessage(tab.id, { type: "ytds-get-state" }).catch(() => null);
+    // Congela a la pareja y reproduce esta pestaña; devuelve la posición de inicio.
+    const prep = await chrome.tabs.sendMessage(tab.id, { type: "ytds-prepare-capture" }).catch(() => null);
+    await sleep(500); // que la pausa de la pareja surta efecto y arranque el audio
+
     const res = await captureTab(tab.id);
+
+    // Devuelve esta pestaña a su posición de inicio (pausada).
+    chrome.tabs.sendMessage(tab.id, { type: "ytds-restore", pos: prep ? prep.currentTime : undefined }).catch(() => {});
+
     if (res && res.error) throw new Error(res.error);
 
     const clip = {
       videoId,
       samples: res.samples,
       rate: res.sampleRate,
-      pos: state ? state.currentTime : null,
-      startMs: state ? state.startMs : null,
-      mode: state ? state.mode : null,
+      pos: prep ? prep.currentTime : null,
+      startMs: prep ? prep.startMs : null,
+      mode: prep ? prep.mode : null,
       ts: Date.now(),
     };
     clips = clips.filter((c) => c.videoId !== videoId);

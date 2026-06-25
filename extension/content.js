@@ -358,6 +358,36 @@
         });
         return true; // respuesta (posible) asíncrona
       }
+      // Antes de capturar ESTA pestaña: congelamos a la pareja (no debe avanzar)
+      // y nos reproducimos para emitir audio, sin propagar el play a la pareja.
+      if (msg.type === "ytds-prepare-capture") {
+        const v = getVideo();
+        sync.suppressPlayUntil = Date.now() + 40000; // toda la captura
+        sendCommand("pause"); // congela a la pareja
+        if (v) {
+          const p = v.play();
+          if (p && p.catch) p.catch(() => {});
+        }
+        sendResponse({
+          videoId: currentVideoId(),
+          currentTime: v ? v.currentTime : null,
+          startMs: getStartMs(),
+          mode: state.mode,
+        });
+        return true;
+      }
+      // Tras capturar: volvemos a la posición de inicio y pausamos.
+      if (msg.type === "ytds-restore") {
+        const v = getVideo();
+        if (v) {
+          sync.suppressUntil = Date.now() + 2000;
+          sync.suppressPlayUntil = Date.now() + 2000;
+          if (typeof msg.pos === "number") v.currentTime = msg.pos;
+          v.pause();
+        }
+        sendResponse({ ok: true });
+        return true;
+      }
     });
   }
 
