@@ -22,26 +22,22 @@
     );
   }
 
-  /** Reproductor de YouTube (#movie_player), expone su API: getVideoData, etc. */
-  function ytPlayer() {
-    return document.querySelector("#movie_player");
+  /** Lee un atributo data-* publicado por el puente (bridge.js, MAIN world). */
+  function bridgeAttr(name) {
+    return document.documentElement.getAttribute(name);
   }
 
-  /** Datos del video según la API de YouTube (incluye isLive), o null. */
-  function ytData() {
-    const p = ytPlayer();
-    return p && typeof p.getVideoData === "function" ? p.getVideoData() : null;
-  }
-
-  /** Duración del contenido (s): prefiere el <video>, cae a la API de YouTube. */
+  /** Duración del contenido (s): prefiere el <video>, cae al dato del puente. */
   function getDuration(video) {
     if (video && Number.isFinite(video.duration) && video.duration > 0) return video.duration;
-    const p = ytPlayer();
-    if (p && typeof p.getDuration === "function") {
-      const d = p.getDuration();
-      if (Number.isFinite(d) && d > 0) return d;
-    }
-    return NaN;
+    const d = parseFloat(bridgeAttr("data-ytds-duration"));
+    return Number.isFinite(d) && d > 0 ? d : NaN;
+  }
+
+  /** Hora de inicio del directo (epoch ms) publicada por el puente, o null. */
+  function getStartMs() {
+    const t = parseInt(bridgeAttr("data-ytds-start"), 10);
+    return Number.isFinite(t) ? t : null;
   }
 
   /** Extremo "en vivo" del buffer reproducible (segundos), o NaN si no hay. */
@@ -56,22 +52,20 @@
   /**
    * Distingue directo de VOD.
    *
-   * Señal primaria y autoritativa: la API del reproductor de YouTube,
-   * `player.getVideoData().isLive` (booleano). Está disponible de inmediato,
-   * sin esperar a que el buffer pueble la metadata, y no se deja engañar por
-   * el badge/clase ".ytp-live", que YouTube DEJA en el DOM de las grabaciones
-   * de directos ya terminados (que en realidad son VOD).
+   * Señal primaria: `data-ytds-islive` que publica el puente leyendo
+   * `getVideoData().isLive` de la API de YouTube. Es autoritativa, inmediata y
+   * no se deja engañar por el badge/clase ".ytp-live", que YouTube DEJA en el
+   * DOM de las grabaciones de directos ya terminados (que en realidad son VOD).
    *
    * Respaldo: la duración del <video> (Infinity = live, finita = VOD), por si
-   * la API aún no está lista.
+   * el puente aún no publicó el dato.
    *
    * Devuelve 'live', 'vod', o null si aún no hay suficiente información.
    */
   function detectMode() {
-    const data = ytData();
-    if (data && typeof data.isLive === "boolean") {
-      return data.isLive ? "live" : "vod";
-    }
+    const live = bridgeAttr("data-ytds-islive");
+    if (live === "true") return "live";
+    if (live === "false") return "vod";
 
     const v = getVideo();
     if (v && v.readyState >= 1) {
@@ -145,8 +139,8 @@
   const sync = {
     partner: null, // presencia de la otra pestaña emparejada, o null
     appliedFor: null, // videoId de pareja para el que ya auto-sincronicé
-    record: null, // desfase guardado para el par actual, o null
-    suppressUntil: 0, // ignora 'seeked' propios (de applySync) hasta este instante
+    best: null, // mejor desfase disponible { low, high, delta, source }, o null
+    suppressUntil: 0, // ignora 'seeked' propios (de applyDelta) hasta este instante
   };
 
   let autosaveTimer = null;
@@ -161,14 +155,16 @@
     return typeof chrome !== "undefined" && chrome.storage && chrome.storage.local;
   }
 
-  /** ID del video de ESTA pestaña (de la URL, o de la API de YouTube). */
+  /** ID del video de ESTA pestaña (de la URL: ?v= o /live/ID). */
   function currentVideoId() {
     try {
-      const v = new URL(location.href).searchParams.get("v");
+      const u = new URL(location.href);
+      const v = u.searchParams.get("v");
       if (v) return v;
+      const m = u.pathname.match(/^\/live\/([^/?#]+)/);
+      if (m) return m[1];
     } catch (_) {}
-    const d = ytData();
-    return (d && d.video_id) || null;
+    return null;
   }
 
   function pairKey(a, b) {
@@ -196,6 +192,7 @@
           t: video.currentTime,
           paused: video.paused,
           mode: state.mode,
+          startMs: getStartMs(),
           updated: Date.now(),
         },
       });
@@ -264,7 +261,7 @@
       await chrome.storage.local.set({
         [pairKey(me, partner.videoId)]: { low, high, delta, savedAt: Date.now() },
       });
-      sync.record = { low, high, delta, savedAt: Date.now() };
+      sync.best = { low, high, delta, savedAt: Date.now(), source: "guardado" };
       toast(auto ? "Sync guardado automáticamente ✓" : "Sync guardado ✓");
       renderSync();
       return true;
@@ -273,44 +270,78 @@
     }
   }
 
-  /** Mueve SOLO esta pestaña para cumplir el desfase guardado con la pareja. */
-  async function applySync(announce) {
+  /**
+   * Mejor desfase disponible para el par actual, con su origen:
+   *  - 'guardado': el que el usuario cuadró (manual/autosave) — máxima prioridad.
+   *  - 'inicio': estimado por la diferencia de horas de inicio de cada directo.
+   * Devuelve { low, high, delta, source } o null si no hay forma de estimarlo.
+   */
+  async function bestDelta() {
+    const me = currentVideoId();
+    if (!me || !sync.partner) return null;
+
+    const rec = await loadPairRecord();
+    if (rec) return { ...rec, source: "guardado" };
+
+    const myStart = getStartMs();
+    const pStart = sync.partner.startMs;
+    if (myStart && pStart) {
+      const [low, high] = [me, sync.partner.videoId].sort();
+      const startLow = low === me ? myStart : pStart;
+      const startHigh = high === me ? myStart : pStart;
+      // delta = pos(high) − pos(low) = inicio(low) − inicio(high).
+      return { low, high, delta: (startLow - startHigh) / 1000, source: "inicio" };
+    }
+    return null;
+  }
+
+  /** Mueve SOLO esta pestaña para cumplir `rec` (desfase) respecto a la pareja. */
+  function applyDelta(rec, message) {
     const me = currentVideoId();
     const video = getVideo();
     if (!me || !video || !sync.partner) return false;
-    const rec = await loadPairRecord();
-    if (!rec) return false;
     const pPos = partnerNow(sync.partner);
     // Buscamos pos(high) − pos(low) = delta, ajustando únicamente esta pestaña.
     let target = me === rec.low ? pPos - rec.delta : pPos + rec.delta;
     target = clamp(target, 0, maxTime(video));
     sync.suppressUntil = Date.now() + 1500; // no auto-guardar este seek propio
     video.currentTime = target;
-    sync.appliedFor = sync.partner.videoId;
-    if (announce) toast("Sincronizado automáticamente ✨");
+    if (message) toast(message);
     render();
     return true;
   }
 
-  /** Tras emparejar, auto-sincroniza una vez si hay desfase guardado. */
+  /** Reaplica manualmente el mejor desfase disponible (botón Re-sincronizar). */
+  async function applySync() {
+    const d = await bestDelta();
+    if (!d) return false;
+    return applyDelta(d, d.source === "inicio" ? "Estimado por hora de inicio ✨" : "Re-sincronizado ✨");
+  }
+
+  /** Tras emparejar, auto-sincroniza una vez con el mejor desfase disponible. */
   async function maybeAutoSync() {
     if (!sync.partner) return;
     if (sync.appliedFor === sync.partner.videoId) return; // ya hecho para esta pareja
-    const rec = await loadPairRecord();
-    if (!rec) return;
-    // Solo la pestaña "seguidora" (videoId mayor) se mueve, para que no se ajusten ambas.
-    if (currentVideoId() !== rec.high) {
-      sync.appliedFor = sync.partner.videoId; // el ancla no se mueve, pero marca como resuelto
+    const d = await bestDelta();
+    if (!d) return;
+    sync.appliedFor = sync.partner.videoId;
+    // Solo la pestaña "seguidora" (videoId mayor) se mueve; el ancla se queda.
+    if (currentVideoId() !== d.high) {
       renderSync();
       return;
     }
-    await applySync(true);
+    applyDelta(
+      d,
+      d.source === "inicio"
+        ? `Estimado por hora de inicio (Δ ${d.delta.toFixed(0)}s)`
+        : "Sincronizado automáticamente ✨"
+    );
     renderSync();
   }
 
   window.__ytDualSync = {
     nudge, goLive, togglePlay, getVideo, getMode: () => state.mode,
-    saveSync, applySync: () => applySync(true), getPartner: () => sync.partner,
+    saveSync, applySync, bestDelta, getPartner: () => sync.partner,
   };
 
   // --- Estado ----------------------------------------------------------------
@@ -376,7 +407,7 @@
       applySync: panel.querySelector("[data-applysync]"),
     };
 
-    els.applySync.addEventListener("click", () => applySync(true));
+    els.applySync.addEventListener("click", () => applySync());
 
     document.body.appendChild(panel);
     restorePosition();
@@ -431,7 +462,7 @@
     }
   }
 
-  /** Refleja el estado de emparejamiento y del sync guardado en el panel. */
+  /** Refleja el estado de emparejamiento y del desfase disponible en el panel. */
   function renderSync() {
     if (!els.syncStatus) return;
     if (!sync.partner) {
@@ -440,9 +471,14 @@
       els.applySync.disabled = true;
       return;
     }
-    if (sync.record) {
+    const best = sync.best;
+    if (best && best.source === "guardado") {
       els.applySync.disabled = false;
-      els.syncStatus.textContent = "🔗 emparejado · guardado (Δ " + sync.record.delta.toFixed(1) + "s)";
+      els.syncStatus.textContent = "🔗 guardado (Δ " + best.delta.toFixed(1) + "s)";
+      els.syncStatus.className = "ytds-sync-status paired saved";
+    } else if (best && best.source === "inicio") {
+      els.applySync.disabled = false;
+      els.syncStatus.textContent = "🔗 estimado por inicio (Δ " + best.delta.toFixed(0) + "s)";
       els.syncStatus.className = "ytds-sync-status paired saved";
     } else {
       els.applySync.disabled = true;
@@ -557,7 +593,7 @@
     hookSeek();
     await heartbeat();
     await refreshPartner();
-    sync.record = await loadPairRecord();
+    sync.best = sync.partner ? await bestDelta() : null;
     renderSync();
     await maybeAutoSync();
   }
@@ -583,7 +619,7 @@
     state.mode = null;
     sync.partner = null;
     sync.appliedFor = null;
-    sync.record = null;
+    sync.best = null;
     if (els.badge) {
       els.badge.textContent = "…";
       els.badge.className = "ytds-badge";

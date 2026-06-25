@@ -10,6 +10,9 @@ Panel flotante en cada pestaña para empujar el `currentTime` a mano y cuadrar d
 **Persistencia del desfase** ✅ (actual)
 El desfase entre dos VOD es constante, así que se **guarda por par de videos** y se **reaplica solo** al reabrir el mismo par. Las dos pestañas se coordinan vía `chrome.storage.local` (pizarra de presencia), sin service worker.
 
+**Estimación por hora de inicio** ✅ (actual)
+Para un par **nuevo** (sin desfase guardado), se estima el desfase con la **hora de arranque de cada directo** (`liveBroadcastDetails.startTimestamp`): `Δ = inicio(low) − inicio(high)`. Cuadra los dos POV de entrada con ~1 s de error, sin tocar nada ni capturar audio. La metadata se lee con un puente en el MAIN world (`bridge.js`) que la expone como atributos `data-*` del DOM.
+
 **Fase 2 — sync automático** 🔜
 Captura de audio con `chrome.tabCapture` + offscreen document, cross-correlación por FFT entre ambos videos para calcular el offset y corregirlo solo, para cualquier par nuevo. Plan detallado en [`docs/fase-2-plan.md`](docs/fase-2-plan.md).
 
@@ -50,14 +53,16 @@ La extensión distingue el tipo de pestaña combinando señales (`video.duration
 - **Ir al live**: vuelve al borde en vivo y resetea el offset.
 - El panel es arrastrable (recuerda su posición) y minimizable.
 
-### Sync persistente entre pestañas
+### Sync entre pestañas
 
-Con los dos videos abiertos, el panel detecta la **segunda pestaña** automáticamente (`🔗 emparejado`):
+Con los dos videos abiertos, el panel detecta la **segunda pestaña** automáticamente y muestra el estado del desfase:
 
-- **💾 Guardar**: una vez cuadrados a mano, guarda el desfase de **este par** de videos.
-- **✨ Aplicar**: reaplica el desfase guardado (también se hace **solo** al reabrir el par: la pestaña del video "seguidor" se reposiciona y avisa con *Sincronizado automáticamente*).
+- `🔗 estimado por inicio (Δ Xs)` — par nuevo: lo calculó por la hora de arranque de cada directo y ya lo aplicó.
+- `🔗 guardado (Δ Xs)` — par ya cuadrado antes: usa tu ajuste guardado (tiene prioridad sobre la estimación).
 
-Así, para un par que ya cuadraste, no hay que repetir el ajuste manual.
+El desfase se **aplica solo** al emparejar (la pestaña del video "seguidor" se reposiciona) y se **guarda solo** en cuanto lo ajustas a mano (autosave). El botón **✨ Re-sincronizar** reaplica el mejor desfase disponible si pausaste un video.
+
+Prioridad: **guardado** (manual/autosave) › **estimado por hora de inicio**.
 
 ## Estructura
 

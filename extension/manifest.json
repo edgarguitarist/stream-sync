@@ -10,6 +10,15 @@
         "https://www.youtube.com/watch*",
         "https://www.youtube.com/live/*"
       ],
+      "js": ["bridge.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://www.youtube.com/watch*",
+        "https://www.youtube.com/live/*"
+      ],
       "js": ["content.js"],
       "css": ["panel.css"],
       "run_at": "document_idle"
