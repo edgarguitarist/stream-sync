@@ -1,11 +1,11 @@
 // YT Dual Sync — content script (Fase 1: sync manual)
-// Inyecta un panel flotante arrastrable que controla el <video> del live.
-// Puntos de enganche para la Fase 2 (sync automático): nudge(delta) y goLive().
+// Inyecta un panel flotante arrastrable que controla el <video>.
+// Detecta si la pestaña es un DIRECTO (live) o un VIDEO guardado (VOD) y
+// adapta controles y lecturas. Puntos de enganche Fase 2: nudge(delta), goLive().
 
 (() => {
   "use strict";
 
-  // Evita doble inyección si YouTube re-navega (SPA) sobre la misma pestaña.
   if (window.__ytDualSync) return;
   window.__ytDualSync = true;
 
@@ -14,7 +14,6 @@
 
   // --- Acceso al <video> -----------------------------------------------------
 
-  /** Devuelve el <video> principal del reproductor, o null si aún no existe. */
   function getVideo() {
     return (
       document.querySelector("video.html5-main-video") ||
@@ -30,29 +29,58 @@
     return r.end(r.length - 1);
   }
 
+  // --- Detección de modo: 'live' | 'vod' -------------------------------------
+
+  /**
+   * Distingue directo de VOD combinando varias señales:
+   *  - En un directo, video.duration suele ser Infinity.
+   *  - El reproductor marca el cronómetro con la clase .ytp-live y muestra
+   *    el badge "EN DIRECTO" (.ytp-live-badge) solo durante un live.
+   * Devuelve 'live', 'vod', o null si aún no hay suficiente información.
+   */
+  function detectMode() {
+    const v = getVideo();
+    if (!v || v.readyState < 1) return null; // sin metadata todavía
+
+    const durFinite = Number.isFinite(v.duration) && v.duration > 0;
+    const liveMarker =
+      document.querySelector(".ytp-time-display.ytp-live") ||
+      document.querySelector(".ytp-live-badge");
+
+    if (liveMarker || !Number.isFinite(v.duration)) return "live";
+    if (durFinite) return "vod";
+    return null;
+  }
+
+  /** Límite superior de seek según el modo: live edge en directo, duración en VOD. */
+  function maxTime(video) {
+    if (state.mode === "live") {
+      const e = liveEdge(video);
+      return Number.isNaN(e) ? Infinity : e;
+    }
+    return Number.isFinite(video.duration) ? video.duration : Infinity;
+  }
+
   // --- Hooks de sincronización (también usados por la Fase 2) ----------------
 
   /**
-   * Empuja el currentTime del live en `delta` segundos (negativo = retrasar).
-   * Recuerda: en un live solo tiene sentido retrasar al que va adelante.
+   * Empuja el currentTime en `delta` segundos.
+   * - Live: solo es útil retrasar (el de atrás ya está en el live edge).
+   * - VOD: se puede adelantar y retrasar libremente dentro de [0, duración].
    * @param {number} delta segundos a sumar al currentTime
-   * @returns {number|undefined} el nuevo currentTime, o undefined si no hay video
+   * @returns {number|undefined} nuevo currentTime, o undefined si no hay video
    */
   function nudge(delta) {
     const video = getVideo();
     if (!video) return undefined;
-    const edge = liveEdge(video);
-    let t = video.currentTime + delta;
-    // No dejar pasar el live edge (no se puede ir al futuro).
-    if (!Number.isNaN(edge)) t = Math.min(t, edge);
-    if (t < 0) t = 0;
+    let t = clamp(video.currentTime + delta, 0, maxTime(video));
     video.currentTime = t;
-    bumpOffset(delta);
+    state.offset += delta;
     render();
     return t;
   }
 
-  /** Salta al borde en vivo (resetea el desfase manual acumulado). */
+  /** Solo live: salta al borde en vivo y resetea el desfase manual. */
   function goLive() {
     const video = getVideo();
     if (!video) return;
@@ -62,25 +90,29 @@
     render();
   }
 
-  // Exponer hooks para depuración y para la Fase 2.
-  window.__ytDualSync = { nudge, goLive, getVideo };
+  /** Solo VOD: pausa/reproduce el video (útil para cuadrar dos VODs a mano). */
+  function togglePlay() {
+    const video = getVideo();
+    if (!video) return;
+    if (video.paused) video.play();
+    else video.pause();
+    render();
+  }
+
+  window.__ytDualSync = { nudge, goLive, togglePlay, getVideo, getMode: () => state.mode };
 
   // --- Estado ----------------------------------------------------------------
 
   const state = {
-    // Desfase manual acumulado (segundos) que el usuario aplicó en esta pestaña.
-    offset: 0,
+    offset: 0, // desfase manual acumulado (s) en esta pestaña
+    mode: null, // 'live' | 'vod' | null
   };
-
-  function bumpOffset(delta) {
-    state.offset += delta;
-  }
 
   // --- Panel UI --------------------------------------------------------------
 
   const STEPS = [-5, -1, -0.5, 0.5, 1, 5];
 
-  let panel, offsetEl, liveEl;
+  let panel, els = {};
 
   function buildPanel() {
     panel = document.createElement("div");
@@ -88,18 +120,19 @@
     panel.innerHTML = `
       <div class="ytds-header" data-drag>
         <span class="ytds-title">YT Dual Sync</span>
+        <span class="ytds-badge" data-badge>…</span>
         <button class="ytds-min" title="Minimizar">–</button>
       </div>
       <div class="ytds-body">
         <div class="ytds-readout">
-          <div class="ytds-offset">offset <b data-offset>0.0s</b></div>
-          <div class="ytds-live">behind live <b data-live>–</b></div>
+          <div class="ytds-left"><span data-leftlabel>posición</span><b data-leftval>–</b></div>
+          <div class="ytds-right">offset<b data-offset>0.0s</b></div>
         </div>
         <div class="ytds-steps"></div>
         <div class="ytds-actions">
-          <button class="ytds-golive" data-golive>Ir al live</button>
+          <button class="ytds-sec" data-sec>…</button>
         </div>
-        <p class="ytds-hint">Retrasa al directo que va <b>adelante</b> hasta cuadrarlo.</p>
+        <p class="ytds-hint" data-hint></p>
       </div>
     `;
 
@@ -112,31 +145,66 @@
       steps.appendChild(b);
     }
 
-    panel.querySelector("[data-golive]").addEventListener("click", goLive);
     panel.querySelector(".ytds-min").addEventListener("click", () => {
       panel.classList.toggle("ytds-collapsed");
     });
 
-    offsetEl = panel.querySelector("[data-offset]");
-    liveEl = panel.querySelector("[data-live]");
+    els = {
+      badge: panel.querySelector("[data-badge]"),
+      leftLabel: panel.querySelector("[data-leftlabel]"),
+      leftVal: panel.querySelector("[data-leftval]"),
+      offset: panel.querySelector("[data-offset]"),
+      sec: panel.querySelector("[data-sec]"),
+      hint: panel.querySelector("[data-hint]"),
+    };
 
     document.body.appendChild(panel);
     restorePosition();
     makeDraggable(panel, panel.querySelector("[data-drag]"));
   }
 
+  /** Ajusta badge, etiqueta de lectura, botón secundario y pista al modo actual. */
+  function applyMode(mode) {
+    state.mode = mode;
+    const isLive = mode === "live";
+
+    els.badge.textContent = isLive ? "EN DIRECTO" : mode === "vod" ? "VOD" : "…";
+    els.badge.className = "ytds-badge " + (isLive ? "live" : mode === "vod" ? "vod" : "");
+
+    els.leftLabel.textContent = isLive ? "tras el live" : "posición";
+
+    els.sec.className = "ytds-sec " + (isLive ? "live" : "vod");
+    els.sec.onclick = isLive ? goLive : togglePlay;
+
+    els.hint.innerHTML = isLive
+      ? "Retrasa al directo que va <b>adelante</b> hasta cuadrarlo."
+      : "Cuadra ambos videos por el <b>audio compartido</b>; en VOD puedes adelantar y retrasar.";
+  }
+
+  function fmt(t) {
+    if (!Number.isFinite(t)) return "–";
+    const m = Math.floor(t / 60);
+    const s = Math.floor(t % 60);
+    return m + ":" + String(s).padStart(2, "0");
+  }
+
   function render() {
-    if (!offsetEl) return;
+    if (!els.offset) return;
+
     const sign = state.offset > 0 ? "+" : "";
-    offsetEl.textContent = sign + state.offset.toFixed(1) + "s";
+    els.offset.textContent = sign + state.offset.toFixed(1) + "s";
 
     const video = getVideo();
-    if (video) {
+    if (!video) return;
+
+    if (state.mode === "live") {
       const edge = liveEdge(video);
       if (!Number.isNaN(edge)) {
-        const behind = Math.max(0, edge - video.currentTime);
-        liveEl.textContent = behind.toFixed(1) + "s";
+        els.leftVal.textContent = Math.max(0, edge - video.currentTime).toFixed(1) + "s";
       }
+    } else if (state.mode === "vod") {
+      els.leftVal.textContent = fmt(video.currentTime) + " / " + fmt(video.duration);
+      els.sec.textContent = video.paused ? "▶ Reproducir" : "⏸ Pausar";
     }
   }
 
@@ -146,7 +214,7 @@
     let startX, startY, baseLeft, baseTop, dragging = false;
 
     handle.addEventListener("mousedown", (e) => {
-      if (e.target.closest("button")) return; // no arrastrar desde botones
+      if (e.target.closest("button")) return;
       dragging = true;
       startX = e.clientX;
       startY = e.clientY;
@@ -197,24 +265,47 @@
     } catch (_) {}
   }
 
-  // --- Arranque --------------------------------------------------------------
+  // --- Arranque y re-detección de modo ---------------------------------------
+
+  let modeTimer = null;
+
+  /** Sondea hasta determinar el modo (la metadata puede tardar en cargar). */
+  function resolveMode() {
+    clearInterval(modeTimer);
+    const tryDetect = () => {
+      const m = detectMode();
+      if (m) {
+        applyMode(m);
+        render();
+        clearInterval(modeTimer);
+      }
+    };
+    tryDetect();
+    if (!state.mode) modeTimer = setInterval(tryDetect, 500);
+  }
 
   function start() {
-    if (document.getElementById(PANEL_ID)) return;
-    buildPanel();
-    render();
-    // Refresca el "behind live" mientras corre el directo.
+    if (!document.getElementById(PANEL_ID)) buildPanel();
+    resolveMode();
     setInterval(render, 1000);
   }
 
-  // El reproductor puede tardar en montar; espera a tener <body> y <video>.
   function waitAndStart() {
-    if (document.body && getVideo()) {
-      start();
-    } else {
-      setTimeout(waitAndStart, 500);
-    }
+    if (document.body && getVideo()) start();
+    else setTimeout(waitAndStart, 500);
   }
+
+  // YouTube es una SPA: al navegar entre videos no se recarga la página.
+  // Reseteamos el offset y volvemos a detectar el modo.
+  window.addEventListener("yt-navigate-finish", () => {
+    state.offset = 0;
+    state.mode = null;
+    if (els.badge) {
+      els.badge.textContent = "…";
+      els.badge.className = "ytds-badge";
+    }
+    resolveMode();
+  });
 
   waitAndStart();
 })();

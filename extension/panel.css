@@ -24,7 +24,7 @@
 .ytds-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   padding: 8px 10px;
   cursor: grab;
   background: rgba(255, 255, 255, 0.06);
@@ -39,6 +39,30 @@
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.3px;
+}
+
+.ytds-badge {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #cfcfcf;
+}
+
+.ytds-badge.live {
+  background: #c00;
+  color: #fff;
+}
+
+.ytds-badge.vod {
+  background: #2b6cff;
+  color: #fff;
+}
+
+.ytds-min {
+  margin-left: auto;
 }
 
 .ytds-min {
@@ -71,6 +95,10 @@
   font-size: 11px;
   color: #9aa0a6;
   margin-bottom: 10px;
+}
+
+.ytds-right {
+  text-align: right;
 }
 
 .ytds-readout b {
@@ -116,7 +144,7 @@
   display: flex;
 }
 
-.ytds-golive {
+.ytds-sec {
   all: unset;
   flex: 1;
   text-align: center;
@@ -126,12 +154,23 @@
   font-size: 12px;
   font-weight: 600;
   color: #fff;
-  background: #c00;
   transition: background 0.12s;
 }
 
-.ytds-golive:hover {
+.ytds-sec.live {
+  background: #c00;
+}
+
+.ytds-sec.live:hover {
   background: #e10000;
+}
+
+.ytds-sec.vod {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.ytds-sec.vod:hover {
+  background: rgba(255, 255, 255, 0.24);
 }
 
 .ytds-hint {

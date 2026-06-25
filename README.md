@@ -1,11 +1,11 @@
 # YT Dual Sync
 
-Extensión de Chrome (Manifest V3) para sincronizar dos directos de YouTube y ver ambos POV alineados en el tiempo.
+Extensión de Chrome (Manifest V3) para sincronizar dos videos de YouTube —**directos (live)** o **grabaciones (VOD)**— y ver ambos POV alineados en el tiempo.
 
 ## Estado
 
 **Fase 1 — sync manual** ✅ (actual)
-Panel flotante en cada pestaña para empujar el `currentTime` del live a mano y cuadrar dos directos.
+Panel flotante en cada pestaña para empujar el `currentTime` a mano y cuadrar dos videos. Detecta automáticamente si la pestaña es un **directo** o un **VOD** y adapta controles y lecturas.
 
 **Fase 2 — sync automático** 🔜
 Captura de audio con `chrome.tabCapture` + offscreen document, cross-correlación por FFT entre ambos directos para calcular el offset y corregirlo solo.
@@ -14,11 +14,22 @@ Captura de audio con `chrome.tabCapture` + offscreen document, cross-correlació
 
 Ambos directos deben compartir señal de audio (están en call, mismo juego, se escuchan). La cross-correlación de ese audio común da el desfase relativo en milisegundos, mucho más fiable que el timestamp de inicio (latencia, buffer y OBS de cada quien lo arruinan).
 
+## Live vs VOD
+
+La extensión distingue el tipo de pestaña combinando señales (`video.duration` infinito, clase `.ytp-live` del cronómetro, badge "EN DIRECTO") y cambia el comportamiento:
+
+| | **Directo (live)** | **VOD** |
+|---|---|---|
+| Badge | `EN DIRECTO` (rojo) | `VOD` (azul) |
+| Seek | solo **retrasar** (no se pasa del live edge) | **adelantar y retrasar** dentro de `[0, duración]` |
+| Lectura | `tras el live` (segundos detrás del borde) | `posición` (`mm:ss / mm:ss`) |
+| Botón | `Ir al live` | `▶/⏸` play-pausa para cuadrar a mano |
+
 ## Limitaciones conocidas
 
-- Solo se puede **retrasar** al directo que va adelante (el de atrás ya está en el live edge).
+- En **live** solo se puede **retrasar** al directo que va adelante (el de atrás ya está en el live edge). En **VOD** no hay esa restricción.
 - El offset puede driftear en directos largos → recalcular periódicamente.
-- Twitch low-latency tiene ventana de DVR corta; por ahora el foco es YT+YT.
+- Twitch low-latency tiene ventana de DVR corta; por ahora el foco es YouTube.
 
 ## Instalación (dev)
 
