@@ -32,24 +32,28 @@
   // --- Detección de modo: 'live' | 'vod' -------------------------------------
 
   /**
-   * Distingue directo de VOD combinando varias señales:
-   *  - En un directo, video.duration suele ser Infinity.
-   *  - El reproductor marca el cronómetro con la clase .ytp-live y muestra
-   *    el badge "EN DIRECTO" (.ytp-live-badge) solo durante un live.
+   * Distingue directo de VOD.
+   *
+   * Señal decisiva: la DURACIÓN del <video>.
+   *  - Directo en vivo  → video.duration === Infinity (no tiene fin conocido).
+   *  - VOD / grabación  → duración finita y > 0.
+   *
+   * Importante: NO basta con el badge/clase ".ytp-live", porque YouTube los
+   * deja en el DOM en las grabaciones de directos recién terminados (que ya
+   * son VOD). Por eso la duración manda; el marcador solo desempata si la
+   * duración aún no está disponible.
+   *
    * Devuelve 'live', 'vod', o null si aún no hay suficiente información.
    */
   function detectMode() {
     const v = getVideo();
     if (!v || v.readyState < 1) return null; // sin metadata todavía
 
-    const durFinite = Number.isFinite(v.duration) && v.duration > 0;
-    const liveMarker =
-      document.querySelector(".ytp-time-display.ytp-live") ||
-      document.querySelector(".ytp-live-badge");
-
-    if (liveMarker || !Number.isFinite(v.duration)) return "live";
-    if (durFinite) return "vod";
-    return null;
+    if (Number.isFinite(v.duration)) {
+      return v.duration > 0 ? "vod" : null;
+    }
+    // duration === Infinity → live real (o aún sin resolver).
+    return "live";
   }
 
   /** Límite superior de seek según el modo: live edge en directo, duración en VOD. */
