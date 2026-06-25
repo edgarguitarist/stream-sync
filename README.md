@@ -13,8 +13,16 @@ El desfase entre dos VOD es constante, así que se **guarda por par de videos** 
 **Estimación por hora de inicio** ✅ (actual)
 Para un par **nuevo** (sin desfase guardado), se estima el desfase con la **hora de arranque de cada directo** (`liveBroadcastDetails.startTimestamp`): `Δ = inicio(low) − inicio(high)`. Cuadra los dos POV de entrada con ~1 s de error, sin tocar nada ni capturar audio. La metadata se lee con un puente en el MAIN world (`bridge.js`) que la expone como atributos `data-*` del DOM.
 
-**Fase 2 — sync automático** 🔜
-Captura de audio con `chrome.tabCapture` + offscreen document, cross-correlación por FFT entre ambos videos para calcular el offset y corregirlo solo, para cualquier par nuevo. Plan detallado en [`docs/fase-2-plan.md`](docs/fase-2-plan.md).
+**Fase 2 — sync automático por audio** ✅
+Captura de audio con `chrome.tabCapture` + offscreen document (AudioWorklet), congelando la pareja durante cada captura y anclando por reloj de pared; cross-correlación por FFT (`extension/lib/xcorr.js`) para descubrir el offset y aplicarlo solo. Plan e historia en [`docs/fase-2-plan.md`](docs/fase-2-plan.md).
+
+## Componentes del proyecto
+
+Además de la extensión, el repo incluye dos vías más para sincronizar, que comparten el mismo algoritmo (`extension/lib/xcorr.js`):
+
+- **`tools/`** — banco de pruebas en Node: descarga audio real con `yt-dlp`+`ffmpeg` y descubre el desfase **sin navegador** (`sync-probe.mjs`), además del sync por imagen (`visual-probe.mjs`). Ver [`tools/README.md`](tools/README.md).
+- **`site/`** — vista propia: una página que carga **ambos videos en una pestaña** y los sincroniza solo; el desfase se calcula en el servidor (sin el muro CORS). Ver [`site/README.md`](site/README.md).
+- **`docs/roadmap.md`** — ideas e historia.
 
 ## Cómo funciona la sincronización
 
