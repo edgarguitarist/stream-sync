@@ -11,6 +11,7 @@ let driftTimer = null;
 let durationMaster = 0;
 let seeking = false; // el usuario está arrastrando el slider
 let wantPlay = false; // intención del usuario (reproducir / pausar) — la barrera la respeta
+let principalIdx = -1; // video "principal": si ≥0, solo ese se escucha
 let lastUrls = []; // para el botón "♺ audio"
 
 /** Columnas y filas del grid para que N videos quepan sin scroll. */
@@ -97,6 +98,7 @@ function buildPlayers(ids, pos) {
     players.forEach((p) => { try { p.destroy(); } catch {} });
     players = [];
     wantPlay = false;
+    principalIdx = -1;
     const stage = $("stage");
     stage.innerHTML = "";
     stage.hidden = false;
@@ -115,6 +117,7 @@ function buildPlayers(ids, pos) {
       cell.innerHTML =
         `<div id="player${i}"></div>` +
         `<div class="vidlabel">${tag}` +
+        `<button class="star" data-idx="${i}" title="Principal: escuchar solo este">★</button>` +
         `<button class="mute" data-idx="${i}" title="Silenciar este video">🔊</button></div>`;
       stage.appendChild(cell);
 
@@ -137,6 +140,9 @@ function buildPlayers(ids, pos) {
 
     stage.querySelectorAll(".mute").forEach((b) =>
       b.addEventListener("click", () => toggleMute(Number(b.dataset.idx)))
+    );
+    stage.querySelectorAll(".star").forEach((b) =>
+      b.addEventListener("click", () => togglePrincipal(Number(b.dataset.idx)))
     );
 
     window.__ytds = { players, deltas };
@@ -224,12 +230,35 @@ function seekTo(t) {
   for (let i = 1; i < players.length; i++) players[i].seekTo(Math.max(0, t - deltas[i]), true);
 }
 
+function setMuteUI(i, muted) {
+  const btn = document.querySelector(`.mute[data-idx="${i}"]`);
+  if (btn) { btn.textContent = muted ? "🔇" : "🔊"; btn.classList.toggle("on", muted); }
+}
+
 function toggleMute(i) {
   const p = players[i];
   if (!p || !p.isMuted) return;
-  const btn = document.querySelector(`.mute[data-idx="${i}"]`);
-  if (p.isMuted()) { p.unMute(); btn.textContent = "🔊"; btn.classList.remove("on"); }
-  else { p.mute(); btn.textContent = "🔇"; btn.classList.add("on"); }
+  if (p.isMuted()) { p.unMute(); setMuteUI(i, false); }
+  else { p.mute(); setMuteUI(i, true); }
+}
+
+/** Marca un video como "principal": solo ese se escucha (mutea los demás).
+ *  Volver a pulsarlo quita el modo principal y reactiva el audio de todos. */
+function togglePrincipal(i) {
+  principalIdx = principalIdx === i ? -1 : i;
+  players.forEach((p, j) => {
+    if (!p || !p.mute) return;
+    const muted = principalIdx !== -1 && j !== principalIdx;
+    muted ? p.mute() : p.unMute();
+    setMuteUI(j, muted);
+    const sb = document.querySelector(`.star[data-idx="${j}"]`);
+    if (sb) sb.classList.toggle("on", principalIdx === j);
+  });
+}
+
+function toggleFullscreen() {
+  if (document.fullscreenElement) document.exitFullscreen();
+  else document.documentElement.requestFullscreen().catch(() => {});
 }
 
 // Recalcular los desfases por audio en la posición actual (más preciso).
@@ -268,3 +297,8 @@ $("seek").addEventListener("pointerup", () => { seeking = false; });
 $("seek").addEventListener("input", (e) => seekTo(Number(e.target.value)));
 $("seek").addEventListener("change", () => { seeking = false; });
 $("resync").addEventListener("click", resyncHere);
+$("fs").addEventListener("click", toggleFullscreen);
+document.addEventListener("fullscreenchange", () => {
+  $("fs").textContent = document.fullscreenElement ? "🗗" : "⛶";
+  $("fs").title = document.fullscreenElement ? "Salir de pantalla completa" : "Pantalla completa";
+});
