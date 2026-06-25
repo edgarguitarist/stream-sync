@@ -7,8 +7,11 @@ Extensión de Chrome (Manifest V3) para sincronizar dos videos de YouTube —**d
 **Fase 1 — sync manual** ✅ (actual)
 Panel flotante en cada pestaña para empujar el `currentTime` a mano y cuadrar dos videos. Detecta automáticamente si la pestaña es un **directo** o un **VOD** y adapta controles y lecturas.
 
+**Persistencia del desfase** ✅ (actual)
+El desfase entre dos VOD es constante, así que se **guarda por par de videos** y se **reaplica solo** al reabrir el mismo par. Las dos pestañas se coordinan vía `chrome.storage.local` (pizarra de presencia), sin service worker.
+
 **Fase 2 — sync automático** 🔜
-Captura de audio con `chrome.tabCapture` + offscreen document, cross-correlación por FFT entre ambos directos para calcular el offset y corregirlo solo.
+Captura de audio con `chrome.tabCapture` + offscreen document, cross-correlación por FFT entre ambos videos para calcular el offset y corregirlo solo, para cualquier par nuevo. Plan detallado en [`docs/fase-2-plan.md`](docs/fase-2-plan.md).
 
 ## Cómo funciona la sincronización
 
@@ -46,6 +49,15 @@ La extensión distingue el tipo de pestaña combinando señales (`video.duration
 - **behind live**: qué tan atrás del borde en vivo estás.
 - **Ir al live**: vuelve al borde en vivo y resetea el offset.
 - El panel es arrastrable (recuerda su posición) y minimizable.
+
+### Sync persistente entre pestañas
+
+Con los dos videos abiertos, el panel detecta la **segunda pestaña** automáticamente (`🔗 emparejado`):
+
+- **💾 Guardar**: una vez cuadrados a mano, guarda el desfase de **este par** de videos.
+- **✨ Aplicar**: reaplica el desfase guardado (también se hace **solo** al reabrir el par: la pestaña del video "seguidor" se reposiciona y avisa con *Sincronizado automáticamente*).
+
+Así, para un par que ya cuadraste, no hay que repetir el ajuste manual.
 
 ## Estructura
 

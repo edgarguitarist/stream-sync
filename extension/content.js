@@ -129,7 +129,178 @@
     render();
   }
 
-  window.__ytDualSync = { nudge, goLive, togglePlay, getVideo, getMode: () => state.mode };
+  // --- Sync persistente entre pestañas ---------------------------------------
+  // El desfase entre dos VODs es CONSTANTE (son grabaciones fijas). Lo guardamos
+  // por par de IDs de video y lo reaplicamos al reabrir el mismo par. Las dos
+  // pestañas se coordinan con chrome.storage.local como pizarra compartida
+  // (presencia + heartbeat), sin necesidad de service worker.
+
+  const SESSION_ID =
+    (self.crypto && crypto.randomUUID && crypto.randomUUID()) ||
+    "s" + Math.floor(Math.random() * 1e9);
+  const PRESENCE_PREFIX = "ytds:presence:";
+  const PAIR_PREFIX = "ytds:pair:";
+  const PRESENCE_TTL = 6000; // ms; una pestaña está "viva" si su heartbeat es reciente
+
+  const sync = {
+    partner: null, // presencia de la otra pestaña emparejada, o null
+    appliedFor: null, // videoId de pareja para el que ya auto-sincronicé
+    record: null, // desfase guardado para el par actual, o null
+  };
+
+  function storageOk() {
+    return typeof chrome !== "undefined" && chrome.storage && chrome.storage.local;
+  }
+
+  /** ID del video de ESTA pestaña (de la URL, o de la API de YouTube). */
+  function currentVideoId() {
+    try {
+      const v = new URL(location.href).searchParams.get("v");
+      if (v) return v;
+    } catch (_) {}
+    const d = ytData();
+    return (d && d.video_id) || null;
+  }
+
+  function pairKey(a, b) {
+    const [x, y] = [a, b].sort();
+    return PAIR_PREFIX + x + "|" + y;
+  }
+
+  /** Posición estimada de la pareja AHORA (compensa el retraso del heartbeat). */
+  function partnerNow(partner) {
+    if (!partner) return NaN;
+    return partner.paused ? partner.t : partner.t + (Date.now() - partner.updated) / 1000;
+  }
+
+  /** Publica la presencia de esta pestaña (video, posición, estado). */
+  async function heartbeat() {
+    if (!storageOk()) return;
+    const video = getVideo();
+    const vid = currentVideoId();
+    if (!video || !vid) return;
+    try {
+      await chrome.storage.local.set({
+        [PRESENCE_PREFIX + SESSION_ID]: {
+          sid: SESSION_ID,
+          videoId: vid,
+          t: video.currentTime,
+          paused: video.paused,
+          mode: state.mode,
+          updated: Date.now(),
+        },
+      });
+    } catch (_) {}
+  }
+
+  /** Lee presencias vivas y limpia las caducadas. */
+  async function readPresences() {
+    if (!storageOk()) return [];
+    let all;
+    try {
+      all = await chrome.storage.local.get(null);
+    } catch (_) {
+      return [];
+    }
+    const now = Date.now();
+    const live = [];
+    const stale = [];
+    for (const [k, v] of Object.entries(all)) {
+      if (!k.startsWith(PRESENCE_PREFIX)) continue;
+      if (v && now - v.updated < PRESENCE_TTL) live.push(v);
+      else stale.push(k);
+    }
+    if (stale.length) {
+      try {
+        await chrome.storage.local.remove(stale);
+      } catch (_) {}
+    }
+    return live;
+  }
+
+  /** Encuentra la otra pestaña abierta con un video distinto (la pareja). */
+  async function refreshPartner() {
+    const me = currentVideoId();
+    const others = (await readPresences())
+      .filter((p) => p.sid !== SESSION_ID && p.videoId && p.videoId !== me)
+      .sort((a, b) => b.updated - a.updated);
+    sync.partner = others[0] || null;
+    return sync.partner;
+  }
+
+  async function loadPairRecord() {
+    const me = currentVideoId();
+    if (!me || !sync.partner || !storageOk()) return null;
+    const key = pairKey(me, sync.partner.videoId);
+    try {
+      const got = await chrome.storage.local.get(key);
+      return got[key] || null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /** Guarda el desfase actual del par para reusarlo en el futuro. */
+  async function saveSync() {
+    const me = currentVideoId();
+    const video = getVideo();
+    if (!me || !video || !sync.partner) return false;
+    const partner = sync.partner;
+    const [low, high] = [me, partner.videoId].sort();
+    const posMe = video.currentTime;
+    const posPartner = partnerNow(partner);
+    const delta = (high === me ? posMe : posPartner) - (low === me ? posMe : posPartner);
+    if (!storageOk()) return false;
+    try {
+      await chrome.storage.local.set({
+        [pairKey(me, partner.videoId)]: { low, high, delta, savedAt: Date.now() },
+      });
+      toast("Sync guardado para este par ✓");
+      renderSync();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /** Mueve SOLO esta pestaña para cumplir el desfase guardado con la pareja. */
+  async function applySync(announce) {
+    const me = currentVideoId();
+    const video = getVideo();
+    if (!me || !video || !sync.partner) return false;
+    const rec = await loadPairRecord();
+    if (!rec) return false;
+    const pPos = partnerNow(sync.partner);
+    // Buscamos pos(high) − pos(low) = delta, ajustando únicamente esta pestaña.
+    let target = me === rec.low ? pPos - rec.delta : pPos + rec.delta;
+    target = clamp(target, 0, maxTime(video));
+    video.currentTime = target;
+    sync.appliedFor = sync.partner.videoId;
+    if (announce) toast("Sincronizado automáticamente ✨");
+    render();
+    return true;
+  }
+
+  /** Tras emparejar, auto-sincroniza una vez si hay desfase guardado. */
+  async function maybeAutoSync() {
+    if (!sync.partner) return;
+    if (sync.appliedFor === sync.partner.videoId) return; // ya hecho para esta pareja
+    const rec = await loadPairRecord();
+    if (!rec) return;
+    // Solo la pestaña "seguidora" (videoId mayor) se mueve, para que no se ajusten ambas.
+    if (currentVideoId() !== rec.high) {
+      sync.appliedFor = sync.partner.videoId; // el ancla no se mueve, pero marca como resuelto
+      renderSync();
+      return;
+    }
+    await applySync(true);
+    renderSync();
+  }
+
+  window.__ytDualSync = {
+    nudge, goLive, togglePlay, getVideo, getMode: () => state.mode,
+    saveSync, applySync: () => applySync(true), getPartner: () => sync.partner,
+  };
 
   // --- Estado ----------------------------------------------------------------
 
@@ -162,6 +333,13 @@
         <div class="ytds-actions">
           <button class="ytds-sec" data-sec>…</button>
         </div>
+        <div class="ytds-sync">
+          <div class="ytds-sync-status" data-syncstatus>buscando segunda pestaña…</div>
+          <div class="ytds-sync-btns">
+            <button class="ytds-savesync" data-savesync title="Guardar el desfase actual de este par">💾 Guardar</button>
+            <button class="ytds-applysync" data-applysync title="Reaplicar el desfase guardado">✨ Aplicar</button>
+          </div>
+        </div>
         <p class="ytds-hint" data-hint></p>
       </div>
     `;
@@ -186,7 +364,13 @@
       offset: panel.querySelector("[data-offset]"),
       sec: panel.querySelector("[data-sec]"),
       hint: panel.querySelector("[data-hint]"),
+      syncStatus: panel.querySelector("[data-syncstatus]"),
+      saveSync: panel.querySelector("[data-savesync]"),
+      applySync: panel.querySelector("[data-applysync]"),
     };
+
+    els.saveSync.addEventListener("click", () => saveSync());
+    els.applySync.addEventListener("click", () => applySync(true));
 
     document.body.appendChild(panel);
     restorePosition();
@@ -239,6 +423,42 @@
       els.leftVal.textContent = fmt(video.currentTime) + " / " + fmt(getDuration(video));
       els.sec.textContent = video.paused ? "▶ Reproducir" : "⏸ Pausar";
     }
+  }
+
+  /** Refleja el estado de emparejamiento y del sync guardado en el panel. */
+  function renderSync() {
+    if (!els.syncStatus) return;
+    if (!sync.partner) {
+      els.syncStatus.textContent = "buscando segunda pestaña…";
+      els.syncStatus.className = "ytds-sync-status";
+      els.saveSync.disabled = true;
+      els.applySync.disabled = true;
+      return;
+    }
+    els.saveSync.disabled = false;
+    if (sync.record) {
+      els.applySync.disabled = false;
+      els.syncStatus.textContent = "🔗 emparejado · guardado (Δ " + sync.record.delta.toFixed(1) + "s)";
+      els.syncStatus.className = "ytds-sync-status paired saved";
+    } else {
+      els.applySync.disabled = true;
+      els.syncStatus.textContent = "🔗 emparejado · sin sync guardado";
+      els.syncStatus.className = "ytds-sync-status paired";
+    }
+  }
+
+  let toastEl, toastTimer;
+  function toast(msg) {
+    if (!panel) return;
+    if (!toastEl) {
+      toastEl = document.createElement("div");
+      toastEl.className = "ytds-toast";
+      panel.appendChild(toastEl);
+    }
+    toastEl.textContent = msg;
+    toastEl.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove("show"), 2200);
   }
 
   // --- Arrastre del panel ----------------------------------------------------
@@ -317,10 +537,22 @@
     if (!state.mode) modeTimer = setInterval(tryDetect, 500);
   }
 
+  /** Latido de coordinación: publica presencia, busca pareja y auto-sincroniza. */
+  async function syncTick() {
+    await heartbeat();
+    await refreshPartner();
+    sync.record = await loadPairRecord();
+    renderSync();
+    await maybeAutoSync();
+  }
+
   function start() {
     if (!document.getElementById(PANEL_ID)) buildPanel();
     resolveMode();
+    renderSync();
     setInterval(render, 1000);
+    syncTick();
+    setInterval(syncTick, 1000);
   }
 
   function waitAndStart() {
@@ -329,15 +561,27 @@
   }
 
   // YouTube es una SPA: al navegar entre videos no se recarga la página.
-  // Reseteamos el offset y volvemos a detectar el modo.
+  // Reseteamos offset, modo y el emparejamiento, y volvemos a detectar.
   window.addEventListener("yt-navigate-finish", () => {
     state.offset = 0;
     state.mode = null;
+    sync.partner = null;
+    sync.appliedFor = null;
+    sync.record = null;
     if (els.badge) {
       els.badge.textContent = "…";
       els.badge.className = "ytds-badge";
     }
     resolveMode();
+    renderSync();
+  });
+
+  // Al cerrar/ocultar la pestaña, retiramos nuestra presencia de la pizarra.
+  window.addEventListener("pagehide", () => {
+    if (!storageOk()) return;
+    try {
+      chrome.storage.local.remove(PRESENCE_PREFIX + SESSION_ID);
+    } catch (_) {}
   });
 
   waitAndStart();
