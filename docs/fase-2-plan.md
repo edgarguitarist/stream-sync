@@ -76,7 +76,21 @@ extension/
 1. Service worker + offscreen + permisos; probar capturar y graficar el nivel de
    audio de UNA pestaña (validar que `tabCapture` entrega PCM legible).
 2. Capturar las DOS pestañas a la vez y guardar buffers.
-3. Cross-correlación FFT sobre dos clips de prueba con offset conocido (test).
-4. Cablear el botón "Auto-sync" → cálculo → seek + `saveSync()`.
-5. Validación de confianza del pico y manejo de "no sincronizable".
+3. ✅ **Cross-correlación FFT** sobre dos clips con offset conocido — hecho y
+   probado en `extension/lib/xcorr.js` (+ `xcorr.test.mjs`). `estimateLag(a, b, sr)`
+   devuelve `{ lagSamples, lagSeconds, confidence }`; confianza = coef. de
+   correlación normalizado (≈0.9 audio compartido, ≈0.03 sin relación).
+4. Cablear el botón "Auto-sync" → captura → `estimateLag` → seek + `saveSync()`.
+5. Umbral de confianza para aceptar/rechazar el sync ("no sincronizable").
 6. Recalcular periódico para drift (opcional).
+
+### Hecho hasta ahora
+
+- `extension/lib/xcorr.js` — FFT radix-2 + `estimateLag` (corre en navegador y Node).
+- `extension/lib/xcorr.test.mjs` — `node extension/lib/xcorr.test.mjs` (todo OK).
+
+### Pendiente (requiere probar en el navegador)
+
+- `background.js` (service worker) + `offscreen.html/js` + permisos `tabCapture`/`offscreen`.
+- Captura simultánea de ambas pestañas y troceo de ~10 s de audio común.
+- Botón "Auto-sync" en el panel → ejecutar `estimateLag` → aplicar y `saveSync()`.
