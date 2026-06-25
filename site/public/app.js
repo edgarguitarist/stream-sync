@@ -141,10 +141,33 @@ function buildPlayers(ids, pos) {
 
     window.__ytds = { players, deltas };
     startDriftLoop();
-    setStatus("Listo. Pulsa ▶ Reproducir (o el play de la referencia). Los demás la siguen.", "ok");
+    setStatus("Listo. ▶ Reproducir — los demás siguen a la referencia.", "ok");
+    enterImmersive();
   };
   start();
 }
+
+// --- Modo inmersivo (barras flotantes que aparecen al acercar el mouse) -----
+
+let revealTimer = null;
+function enterImmersive() {
+  document.body.classList.add("immersive");
+  // Revela las barras un momento para que se vea dónde están, luego se ocultan.
+  $("bar").classList.add("show");
+  $("controls").classList.add("show");
+  clearTimeout(revealTimer);
+  revealTimer = setTimeout(() => {
+    $("bar").classList.remove("show");
+    $("controls").classList.remove("show");
+  }, 2500);
+}
+
+document.addEventListener("mousemove", (e) => {
+  if (!document.body.classList.contains("immersive")) return;
+  const h = window.innerHeight;
+  $("bar").classList.toggle("show", e.clientY < 80);
+  $("controls").classList.toggle("show", e.clientY > h - 80);
+});
 
 // --- Bucle de sincronía (corrige deriva y refleja play/pausa) ---------------
 

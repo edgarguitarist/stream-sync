@@ -118,3 +118,32 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 }
 .seek { flex: 1 1 200px; }
 .time { font-size: 12px; color: #9aa0a6; font-variant-numeric: tabular-nums; }
+
+/* --- Modo inmersivo: tras cargar, las barras flotan y se ocultan solas ---- */
+body.immersive .stage {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  padding: 0;
+  gap: 2px;
+}
+body.immersive .status { display: none; }
+body.immersive .bar,
+body.immersive .controls {
+  position: fixed;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  background: rgba(20, 20, 22, 0.92);
+  backdrop-filter: blur(6px);
+  transition: transform 0.22s ease, opacity 0.22s ease;
+}
+body.immersive .bar { top: 0; transform: translateY(-100%); opacity: 0; }
+body.immersive .controls { bottom: 0; transform: translateY(100%); opacity: 0; }
+body.immersive .bar.show,
+body.immersive .bar:hover,
+body.immersive .controls.show,
+body.immersive .controls:hover {
+  transform: translateY(0);
+  opacity: 1;
+}
