@@ -50,37 +50,66 @@ function readUrls() {
   return $("urls").value.split(/\r?\n/).map((u) => u.trim()).filter(Boolean);
 }
 
-// --- Sincronizar (llamar al backend) ---------------------------------------
+// --- Persistencia (localStorage): URLs, desfases y posición ----------------
 
-async function doSync() {
+let currentKey = null; // clave del conjunto de videos actual
+function ls(k) { try { return localStorage.getItem(k); } catch { return null; } }
+function lsSet(k, v) { try { localStorage.setItem(k, v); } catch {} }
+function ytId(u) {
+  const s = String(u).trim();
+  const m = s.match(/(?:v=|youtu\.be\/|\/live\/|\/shorts\/|\/embed\/)([\w-]{11})/);
+  return m ? m[1] : s;
+}
+function keyFor(urls) { return urls.map(ytId).join("|"); }
+function loadCache(key) { try { const r = ls("ytds:sync:" + key); return r ? JSON.parse(r) : null; } catch { return null; } }
+function saveCache(key, res) { lsSet("ytds:sync:" + key, JSON.stringify({ master: res.master, items: res.items })); }
+function savedPos(key) { const v = ls("ytds:pos:" + key); return v == null ? null : Number(v); }
+
+// --- Sincronizar -----------------------------------------------------------
+
+async function doSync(restore = false) {
   const urls = readUrls();
+  if (urls.length < 2) { if (!restore) setStatus("Pega al menos 2 URLs (una por línea).", "err"); return; }
   const rawPos = Number($("pos").value);
-  const pos = Number.isFinite(rawPos) && rawPos >= 0 ? rawPos : 600;
-  if (urls.length < 2) return setStatus("Pega al menos 2 URLs (una por línea).", "err");
+  const posInput = Number.isFinite(rawPos) && rawPos >= 0 ? rawPos : 600;
 
   lastUrls = urls;
-  $("sync").disabled = true;
-  setStatus(`Calculando el desfase por audio de ${urls.length} videos… (descarga ~30 s de cada uno, puede tardar)`);
-  try {
-    const r = await fetch("/api/sync", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ urls, pos }),
-    });
-    const res = await r.json();
-    if (res.error) return setStatus("Error: " + res.error, "err");
+  lsSet("ytds:lastUrls", urls.join("\n"));
+  const key = keyFor(urls);
+  currentKey = key;
 
-    const ids = [res.master, ...res.items.map((it) => it.id)];
-    deltas = [0, ...res.items.map((it) => it.delta)];
-    const confs = res.items.map((it) => it.confidence.toFixed(2)).join(", ");
-    setStatus(`Referencia + ${res.items.length} video(s) · conf [${confs}] — cargando…`,
-      res.items.every((it) => it.confidence >= 0.25) ? "ok" : "");
-    buildPlayers(ids, pos);
-  } catch (e) {
-    setStatus("Error de red: " + e, "err");
-  } finally {
-    $("sync").disabled = false;
+  let res = loadCache(key); // ¿ya calculamos estos videos antes?
+  if (res) {
+    setStatus(restore ? "Restaurado (desfases y posición guardados)." : "Usando desfases guardados · ♺ audio para refinar.", "ok");
+  } else {
+    $("sync").disabled = true;
+    setStatus(`Calculando el desfase por audio de ${urls.length} videos… (puede tardar)`);
+    try {
+      const r = await fetch("/api/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ urls, pos: posInput }),
+      });
+      res = await r.json();
+      if (res.error) { setStatus("Error: " + res.error, "err"); return; }
+      saveCache(key, res);
+      const confs = res.items.map((it) => it.confidence.toFixed(2)).join(", ");
+      setStatus(`Referencia + ${res.items.length} video(s) · conf [${confs}] — cargando…`,
+        res.items.every((it) => it.confidence >= 0.25) ? "ok" : "");
+    } catch (e) {
+      setStatus("Error de red: " + e, "err");
+      return;
+    } finally {
+      $("sync").disabled = false;
+    }
   }
+
+  deltas = [0, ...res.items.map((it) => it.delta)];
+  const ids = [res.master, ...res.items.map((it) => it.id)];
+  // Al restaurar, retoma donde se quedó; en un Sincronizar explícito usa el campo pos.
+  const sp = savedPos(key);
+  const startPos = restore && sp != null ? sp : posInput;
+  buildPlayers(ids, startPos);
 }
 
 // --- Construir los reproductores -------------------------------------------
@@ -274,6 +303,7 @@ async function resyncHere() {
     });
     const res = await r.json();
     if (res.error) return setStatus("Error: " + res.error, "err");
+    if (currentKey) saveCache(currentKey, res); // guardar los desfases refinados
     deltas = [0, ...res.items.map((it) => it.delta)];
     // reposicionar seguidores y refrescar etiquetas
     const tags = document.querySelectorAll(".cell .tag");
@@ -290,7 +320,7 @@ async function resyncHere() {
 
 // --- Eventos ----------------------------------------------------------------
 
-$("sync").addEventListener("click", doSync);
+$("sync").addEventListener("click", () => doSync(false));
 $("playpause").addEventListener("click", togglePlay);
 $("seek").addEventListener("pointerdown", () => { seeking = true; });
 $("seek").addEventListener("pointerup", () => { seeking = false; });
@@ -302,3 +332,20 @@ document.addEventListener("fullscreenchange", () => {
   $("fs").textContent = document.fullscreenElement ? "🗗" : "⛶";
   $("fs").title = document.fullscreenElement ? "Salir de pantalla completa" : "Pantalla completa";
 });
+
+// Guarda la posición actual cada 3 s para retomarla al recargar.
+setInterval(() => {
+  if (currentKey && players[0] && players[0].getCurrentTime) {
+    lsSet("ytds:pos:" + currentKey, String(Math.round(players[0].getCurrentTime())));
+  }
+}, 3000);
+
+// Al cargar la página: repuebla las URLs y, si ya tenemos los desfases en caché,
+// restaura todo automáticamente (sin recalcular) en la última posición.
+(function restoreOnLoad() {
+  const saved = ls("ytds:lastUrls");
+  if (!saved) return;
+  $("urls").value = saved;
+  const urls = saved.split(/\r?\n/).map((u) => u.trim()).filter(Boolean);
+  if (urls.length >= 2 && loadCache(keyFor(urls))) doSync(true);
+})();
