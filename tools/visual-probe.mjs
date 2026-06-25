@@ -21,7 +21,7 @@ function parseArgs(argv) {
 function main() {
   const a = parseArgs(process.argv.slice(2));
   if (a._.length < 2) {
-    console.error("uso: node tools/visual-probe.mjs <urlA> <urlB> [--pos 600] [--win 60] [--posA n --posB n] [--align]");
+    console.error("uso: node tools/visual-probe.mjs <urlA> <urlB> [--pos 600] [--win 60] [--posA n --posB n] [--no-align]");
     process.exit(1);
   }
   const out = computeVisualSync({
@@ -31,7 +31,7 @@ function main() {
     win: parseFloat(a.win || "60"),
     posA: a.posA != null ? parseFloat(a.posA) : undefined,
     posB: a.posB != null ? parseFloat(a.posB) : undefined,
-    align: a.align != null,
+    align: a["no-align"] == null,
   });
   console.log(JSON.stringify(out, null, 2));
   const verdict = out.confidence >= 0.2 ? "✓ actividad coincide" : out.confidence >= 0.1 ? "~ dudoso" : "✗ no coincide";

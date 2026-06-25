@@ -1,8 +1,19 @@
 // Descarga de audio de YouTube por secciones, vía yt-dlp + ffmpeg. Reutilizado
 // por el banco de pruebas (sync-probe) y por el backend del sitio.
 import { spawnSync } from "node:child_process";
-import { existsSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, rmSync, readdirSync } from "node:fs";
+import { join, basename } from "node:path";
+
+/** Borra cualquier resto de descarga (.part, intermedios .webm/.m4a, etc.) por prefijo. */
+export function cleanPartials(outDir, prefix) {
+  try {
+    for (const f of readdirSync(outDir)) {
+      if (f.startsWith(prefix)) {
+        try { rmSync(join(outDir, f), { force: true }); } catch (_) {}
+      }
+    }
+  } catch (_) {}
+}
 
 /** Extrae el id de 11 caracteres de una URL de YouTube (o lo devuelve tal cual). */
 export function ytId(s) {
@@ -41,7 +52,7 @@ export function downloadAudioSection(id, start, dur, rate, outDir, attempts = 3)
     const r = spawnSync("python", args, { encoding: "utf8", timeout: 240000 });
     if (existsSync(wav)) return wav;
     last = r.stderr || r.stdout || String(r.error) || "sin salida";
-    try { rmSync(`${base}.part`, { force: true }); } catch (_) {}
+    cleanPartials(outDir, basename(base)); // limpiar restos antes de reintentar
   }
   throw new Error(`descarga falló (${id}) tras ${attempts} intentos: ${last.slice(-300)}`);
 }

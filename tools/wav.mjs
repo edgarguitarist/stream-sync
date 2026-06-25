@@ -39,11 +39,13 @@ export function readWavMono(path) {
     let s = 0;
     for (let c = 0; c < channels; c++) {
       const p = dataOff + (i * channels + c) * bytesPerSample;
-      let v = 0;
+      let v;
       if (bitsPerSample === 16) v = buf.readInt16LE(p) / 32768;
       else if (bitsPerSample === 32 && audioFormat === 3) v = buf.readFloatLE(p);
       else if (bitsPerSample === 32) v = buf.readInt32LE(p) / 2147483648;
+      else if (bitsPerSample === 24) v = ((buf.readUInt8(p) | (buf.readUInt8(p + 1) << 8) | (buf.readInt8(p + 2) << 16))) / 8388608;
       else if (bitsPerSample === 8) v = (buf.readUInt8(p) - 128) / 128;
+      else throw new Error("WAV con profundidad no soportada: " + bitsPerSample + " bits");
       s += v;
     }
     out[i] = s / channels;

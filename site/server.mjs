@@ -27,7 +27,12 @@ function send(res, code, body, type = "text/plain; charset=utf-8") {
 }
 
 async function serveStatic(req, res) {
-  let p = decodeURIComponent((req.url || "/").split("?")[0]);
+  let p;
+  try {
+    p = decodeURIComponent((req.url || "/").split("?")[0]);
+  } catch {
+    return send(res, 400, "bad request"); // URL con %-encoding malformado
+  }
   if (p === "/") p = "/index.html";
   const full = normalize(join(PUB, p));
   if (full !== PUB && !full.startsWith(PUB + sep)) return send(res, 403, "forbidden");
@@ -41,32 +46,56 @@ async function serveStatic(req, res) {
 
 function handleSync(req, res) {
   let body = "";
+  let aborted = false;
+  const sendJson = (code, payload) => send(res, code, JSON.stringify(payload), MIME[".json"]);
+
   req.on("data", (c) => {
+    if (aborted) return;
     body += c;
-    if (body.length > 1e6) req.destroy();
+    if (body.length > 1e6) {
+      aborted = true;
+      sendJson(413, { error: "cuerpo demasiado grande" });
+      req.destroy();
+    }
   });
   req.on("end", () => {
+    if (aborted) return;
     let data;
     try { data = JSON.parse(body); } catch {
-      return send(res, 400, JSON.stringify({ error: "JSON inválido" }), MIME[".json"]);
+      return sendJson(400, { error: "JSON inválido" });
     }
     const idA = ytId(data.urlA || "");
     const idB = ytId(data.urlB || "");
     if (!/^[\w-]{11}$/.test(idA) || !/^[\w-]{11}$/.test(idB)) {
-      return send(res, 400, JSON.stringify({ error: "URLs de YouTube inválidas" }), MIME[".json"]);
+      return sendJson(400, { error: "URLs de YouTube inválidas" });
     }
     // Trabajo pesado (descarga + FFT) en un proceso hijo: no bloquea el servidor.
     const child = spawn("node", [JOB, idA, idB, String(Number(data.pos) || 600), String(Number(data.win) || 30)], {
       cwd: __dir,
     });
-    let out = "", err = "";
+    let out = "", err = "", done = false;
+    const finish = (code, raw, type) => {
+      if (done) return;
+      done = true;
+      send(res, code, raw, type);
+    };
     child.stdout.on("data", (c) => (out += c));
     child.stderr.on("data", (c) => (err += c));
+    child.on("error", (e) =>
+      finish(500, JSON.stringify({ error: "no se pudo lanzar el cálculo: " + String((e && e.message) || e) }), MIME[".json"])
+    );
     child.on("close", () => {
       if (!out.trim()) {
-        return send(res, 500, JSON.stringify({ error: "el cálculo no devolvió datos: " + err.slice(-200) }), MIME[".json"]);
+        return finish(500, JSON.stringify({ error: "el cálculo no devolvió datos: " + err.slice(-200) }), MIME[".json"]);
       }
-      send(res, 200, out, MIME[".json"]);
+      finish(200, out, MIME[".json"]);
+    });
+    // Si el cliente se desconecta, matamos el hijo y no escribimos en el socket cerrado.
+    res.on("close", () => {
+      if (!res.writableEnded) {
+        done = true;
+        child.kill("SIGKILL");
+      }
     });
   });
 }

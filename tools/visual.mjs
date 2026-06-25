@@ -6,9 +6,9 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, rmSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, basename } from "node:path";
 import { estimateLag } from "../extension/lib/xcorr.js";
-import { fetchMeta } from "./ytaudio.mjs";
+import { fetchMeta, cleanPartials } from "./ytaudio.mjs";
 
 const FPS = 5; // muestras/seg de la señal de actividad
 const W = 32, H = 18; // miniatura gris para medir actividad
@@ -29,7 +29,8 @@ function downloadVideoSection(id, start, dur, outDir, attempts = 3) {
   for (let i = 0; i < attempts; i++) {
     const r = spawnSync("python", args, { encoding: "utf8", timeout: 240000 });
     if (existsSync(mp4)) return mp4;
-    last = r.stderr || r.stdout || String(r.error);
+    last = r.stderr || r.stdout || String(r.error) || "sin salida";
+    cleanPartials(outDir, basename(base)); // limpiar restos/intermedios antes de reintentar
   }
   throw new Error(`descarga de video falló (${id}): ${last.slice(-200)}`);
 }

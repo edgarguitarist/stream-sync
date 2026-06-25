@@ -3,17 +3,20 @@
 // A es el "maestro", B sigue con un offset = delta (cuando A está en t, B en t−delta).
 
 let apiReady = false;
+let apiFailed = false;
 let playerA = null;
 let playerB = null;
 let delta = 0; // segundos: cuánto va A por delante de B
 let driftTimer = null;
 let durationA = 0;
+let seeking = false; // el usuario está arrastrando el slider
 
 // Carga de la IFrame Player API.
 window.onYouTubeIframeAPIReady = () => { apiReady = true; };
 (function loadApi() {
   const s = document.createElement("script");
   s.src = "https://www.youtube.com/iframe_api";
+  s.onerror = () => { apiFailed = true; };
   document.head.appendChild(s);
 })();
 
@@ -36,7 +39,8 @@ function fmt(t) {
 async function doSync() {
   const urlA = $("urlA").value.trim();
   const urlB = $("urlB").value.trim();
-  const pos = Number($("pos").value) || 600;
+  const rawPos = Number($("pos").value);
+  const pos = Number.isFinite(rawPos) && rawPos >= 0 ? rawPos : 600;
   if (!urlA || !urlB) return setStatus("Pega las dos URLs de YouTube.", "err");
 
   $("sync").disabled = true;
@@ -63,8 +67,13 @@ async function doSync() {
 // --- Construir los reproductores -------------------------------------------
 
 function buildPlayers(idA, idB, pos) {
+  let tries = 0;
   const start = () => {
-    if (!apiReady || !window.YT || !YT.Player) return setTimeout(start, 100);
+    if (apiFailed) return setStatus("No se pudo cargar el reproductor de YouTube (¿bloqueado por una extensión o la red?).", "err");
+    if (!apiReady || !window.YT || !YT.Player) {
+      if (++tries > 100) return setStatus("El reproductor de YouTube tardó demasiado en cargar.", "err");
+      return setTimeout(start, 100);
+    }
     $("stage").hidden = false;
     $("controls").hidden = false;
     if (playerA) { try { playerA.destroy(); } catch {} }
@@ -93,7 +102,7 @@ function buildPlayers(idA, idB, pos) {
       playerVars: { ...common, controls: 0 },
       events: {
         onError,
-        onReady: (e) => e.target.seekTo(pos - delta, true),
+        onReady: (e) => e.target.seekTo(Math.max(0, pos - delta), true),
       },
     });
     window.__ytds = { get a() { return playerA; }, get b() { return playerB; }, get delta() { return delta; } };
@@ -111,16 +120,17 @@ function startDriftLoop() {
   driftTimer = setInterval(() => {
     if (!ready()) return;
     const tA = playerA.getCurrentTime();
-    const targetB = tA - delta;
+    const targetB = Math.max(0, tA - delta);
     if (Math.abs(playerB.getCurrentTime() - targetB) > 0.3) playerB.seekTo(targetB, true);
 
     const sA = playerA.getPlayerState();
     const sB = playerB.getPlayerState();
     if (sA === YT.PlayerState.PLAYING && sB !== YT.PlayerState.PLAYING) playerB.playVideo();
-    if (sA === YT.PlayerState.PAUSED && sB === YT.PlayerState.PLAYING) playerB.pauseVideo();
+    // ENDED cuenta como pausa para el seguidor (si no, B seguiría reproduciendo).
+    if ((sA === YT.PlayerState.PAUSED || sA === YT.PlayerState.ENDED) && sB === YT.PlayerState.PLAYING) playerB.pauseVideo();
 
-    // refrescar UI
-    $("seek").value = tA;
+    // refrescar UI (sin pisar el slider si el usuario lo está arrastrando)
+    if (!seeking) $("seek").value = tA;
     $("time").textContent = `${fmt(tA)} / ${fmt(durationA)}`;
     $("playpause").textContent = sA === YT.PlayerState.PLAYING ? "⏸ Pausar" : "▶ Reproducir";
   }, 400);
@@ -142,7 +152,7 @@ function togglePlay() {
 function seekTo(t) {
   if (!ready()) return;
   playerA.seekTo(t, true);
-  playerB.seekTo(t - delta, true);
+  playerB.seekTo(Math.max(0, t - delta), true);
 }
 
 function updateDeltaLabel() {
@@ -152,7 +162,7 @@ function updateDeltaLabel() {
 function nudge(d) {
   delta += d;
   updateDeltaLabel();
-  if (ready()) playerB.seekTo(playerA.getCurrentTime() - delta, true);
+  if (ready()) playerB.seekTo(Math.max(0, playerA.getCurrentTime() - delta), true);
 }
 
 function toggleMute(which) {
@@ -180,7 +190,7 @@ async function resyncHere() {
     if (res.error) return setStatus("Error: " + res.error, "err");
     delta = res.delta;
     updateDeltaLabel();
-    playerB.seekTo(playerA.getCurrentTime() - delta, true);
+    playerB.seekTo(Math.max(0, playerA.getCurrentTime() - delta), true);
     setStatus(`Δ ${delta.toFixed(2)} s · conf ${res.confidence.toFixed(2)}`, res.confidence >= 0.25 ? "ok" : "");
   } catch (e) {
     setStatus("Error de red: " + e, "err");
@@ -191,7 +201,10 @@ async function resyncHere() {
 
 $("sync").addEventListener("click", doSync);
 $("playpause").addEventListener("click", togglePlay);
+$("seek").addEventListener("pointerdown", () => { seeking = true; });
+$("seek").addEventListener("pointerup", () => { seeking = false; });
 $("seek").addEventListener("input", (e) => seekTo(Number(e.target.value)));
+$("seek").addEventListener("change", () => { seeking = false; });
 $("resync").addEventListener("click", resyncHere);
 document.querySelectorAll(".nudge").forEach((b) =>
   b.addEventListener("click", () => nudge(Number(b.dataset.nudge)))

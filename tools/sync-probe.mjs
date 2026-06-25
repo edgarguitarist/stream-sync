@@ -26,7 +26,7 @@ function parseArgs(argv) {
 async function main() {
   const a = parseArgs(process.argv.slice(2));
   if (a._.length < 2) {
-    console.error("uso: node tools/sync-probe.mjs <urlA> <urlB> [--pos 600] [--win 30] [--rate 8000] [--posA n --posB n] [--align]");
+    console.error("uso: node tools/sync-probe.mjs <urlA> <urlB> [--pos 600] [--win 30] [--rate 8000] [--posA n --posB n] [--no-align]");
     process.exit(1);
   }
   const out = computeSync({
@@ -37,7 +37,7 @@ async function main() {
     rate: parseInt(a.rate || "8000", 10),
     posA: a.posA != null ? parseFloat(a.posA) : undefined,
     posB: a.posB != null ? parseFloat(a.posB) : undefined,
-    align: a.align != null,
+    align: a["no-align"] == null, // alineación por hora de inicio ON salvo --no-align
   });
   console.log(JSON.stringify(out, null, 2));
   const verdict = out.confidence >= 0.25 ? "✓ coincide" : out.confidence >= 0.12 ? "~ dudoso" : "✗ no coincide";

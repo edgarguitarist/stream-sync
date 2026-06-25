@@ -15,11 +15,11 @@ Permite probar muchos pares de directos/videos de forma automática.
 ## Uso
 
 ```bash
-# Ventana larga, búsqueda a ciegas (lento: descarga ~win s de cada uno)
-node tools/sync-probe.mjs <urlA> <urlB> --pos 600 --win 120
+# Por defecto pre-alinea por la hora de inicio del directo (rápido, ventana corta)
+node tools/sync-probe.mjs <urlA> <urlB> --pos 700 --win 25
 
-# Pre-alineado por hora de inicio del directo (rápido: ventana corta basta)
-node tools/sync-probe.mjs <urlA> <urlB> --pos 700 --win 25 --align
+# Sin alinear (búsqueda a ciegas; usa ventana larga para que haya solape)
+node tools/sync-probe.mjs <urlA> <urlB> --pos 600 --win 120 --no-align
 
 # Posiciones distintas por video
 node tools/sync-probe.mjs <urlA> <urlB> --posA 700 --posB 659 --win 25
@@ -44,7 +44,7 @@ Prototipo que correlaciona **actividad visual** (diferencia media entre frames,
 con `ffmpeg`) en vez de audio — reutiliza el mismo `estimateLag`.
 
 ```bash
-node tools/visual-probe.mjs <urlA> <urlB> --pos 800 --win 60 --align
+node tools/visual-probe.mjs <urlA> <urlB> --pos 800 --win 60
 ```
 
 **Cuándo funciona** (verificado):
