@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "YT Dual Sync",
+  "version": "0.1.0",
+  "description": "Sincroniza dos directos de YouTube para ver ambos POV alineados en el tiempo.",
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.youtube.com/watch*",
+        "https://www.youtube.com/live/*"
+      ],
+      "js": ["content.js"],
+      "css": ["panel.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}

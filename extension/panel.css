@@ -1,0 +1,146 @@
+/* YT Dual Sync — estilos del panel flotante */
+
+#yt-dual-sync-panel {
+  position: fixed;
+  top: 88px;
+  right: 16px;
+  z-index: 2147483647; /* por encima del reproductor de YouTube */
+  width: 220px;
+  font-family: "Roboto", "Segoe UI", system-ui, sans-serif;
+  color: #f1f1f1;
+  background: rgba(20, 20, 22, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(6px);
+  user-select: none;
+  overflow: hidden;
+}
+
+#yt-dual-sync-panel.ytds-dragging {
+  opacity: 0.92;
+}
+
+.ytds-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  cursor: grab;
+  background: rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.ytds-header:active {
+  cursor: grabbing;
+}
+
+.ytds-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+
+.ytds-min {
+  all: unset;
+  cursor: pointer;
+  width: 20px;
+  height: 20px;
+  line-height: 18px;
+  text-align: center;
+  border-radius: 6px;
+  font-size: 16px;
+  color: #cfcfcf;
+}
+
+.ytds-min:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.ytds-body {
+  padding: 10px;
+}
+
+#yt-dual-sync-panel.ytds-collapsed .ytds-body {
+  display: none;
+}
+
+.ytds-readout {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: #9aa0a6;
+  margin-bottom: 10px;
+}
+
+.ytds-readout b {
+  display: block;
+  font-size: 15px;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+}
+
+.ytds-steps {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.ytds-step {
+  all: unset;
+  text-align: center;
+  cursor: pointer;
+  padding: 7px 0;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  background: rgba(255, 255, 255, 0.08);
+  transition: background 0.12s;
+}
+
+.ytds-step:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.ytds-step.neg {
+  color: #ff8a80;
+}
+
+.ytds-step.pos {
+  color: #80d8a0;
+}
+
+.ytds-actions {
+  display: flex;
+}
+
+.ytds-golive {
+  all: unset;
+  flex: 1;
+  text-align: center;
+  cursor: pointer;
+  padding: 8px 0;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  background: #c00;
+  transition: background 0.12s;
+}
+
+.ytds-golive:hover {
+  background: #e10000;
+}
+
+.ytds-hint {
+  margin: 10px 0 0;
+  font-size: 10px;
+  line-height: 1.4;
+  color: #80868b;
+}
+
+.ytds-hint b {
+  color: #cfcfcf;
+}
