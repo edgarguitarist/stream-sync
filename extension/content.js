@@ -22,6 +22,28 @@
     );
   }
 
+  /** Reproductor de YouTube (#movie_player), expone su API: getVideoData, etc. */
+  function ytPlayer() {
+    return document.querySelector("#movie_player");
+  }
+
+  /** Datos del video según la API de YouTube (incluye isLive), o null. */
+  function ytData() {
+    const p = ytPlayer();
+    return p && typeof p.getVideoData === "function" ? p.getVideoData() : null;
+  }
+
+  /** Duración del contenido (s): prefiere el <video>, cae a la API de YouTube. */
+  function getDuration(video) {
+    if (video && Number.isFinite(video.duration) && video.duration > 0) return video.duration;
+    const p = ytPlayer();
+    if (p && typeof p.getDuration === "function") {
+      const d = p.getDuration();
+      if (Number.isFinite(d) && d > 0) return d;
+    }
+    return NaN;
+  }
+
   /** Extremo "en vivo" del buffer reproducible (segundos), o NaN si no hay. */
   function liveEdge(video) {
     const r = video.seekable;
@@ -34,26 +56,29 @@
   /**
    * Distingue directo de VOD.
    *
-   * Señal decisiva: la DURACIÓN del <video>.
-   *  - Directo en vivo  → video.duration === Infinity (no tiene fin conocido).
-   *  - VOD / grabación  → duración finita y > 0.
+   * Señal primaria y autoritativa: la API del reproductor de YouTube,
+   * `player.getVideoData().isLive` (booleano). Está disponible de inmediato,
+   * sin esperar a que el buffer pueble la metadata, y no se deja engañar por
+   * el badge/clase ".ytp-live", que YouTube DEJA en el DOM de las grabaciones
+   * de directos ya terminados (que en realidad son VOD).
    *
-   * Importante: NO basta con el badge/clase ".ytp-live", porque YouTube los
-   * deja en el DOM en las grabaciones de directos recién terminados (que ya
-   * son VOD). Por eso la duración manda; el marcador solo desempata si la
-   * duración aún no está disponible.
+   * Respaldo: la duración del <video> (Infinity = live, finita = VOD), por si
+   * la API aún no está lista.
    *
    * Devuelve 'live', 'vod', o null si aún no hay suficiente información.
    */
   function detectMode() {
-    const v = getVideo();
-    if (!v || v.readyState < 1) return null; // sin metadata todavía
-
-    if (Number.isFinite(v.duration)) {
-      return v.duration > 0 ? "vod" : null;
+    const data = ytData();
+    if (data && typeof data.isLive === "boolean") {
+      return data.isLive ? "live" : "vod";
     }
-    // duration === Infinity → live real (o aún sin resolver).
-    return "live";
+
+    const v = getVideo();
+    if (v && v.readyState >= 1) {
+      if (Number.isFinite(v.duration)) return v.duration > 0 ? "vod" : null;
+      return "live"; // duration === Infinity
+    }
+    return null; // sin información suficiente todavía
   }
 
   /** Límite superior de seek según el modo: live edge en directo, duración en VOD. */
@@ -62,7 +87,8 @@
       const e = liveEdge(video);
       return Number.isNaN(e) ? Infinity : e;
     }
-    return Number.isFinite(video.duration) ? video.duration : Infinity;
+    const d = getDuration(video);
+    return Number.isNaN(d) ? Infinity : d;
   }
 
   // --- Hooks de sincronización (también usados por la Fase 2) ----------------
@@ -187,9 +213,12 @@
 
   function fmt(t) {
     if (!Number.isFinite(t)) return "–";
-    const m = Math.floor(t / 60);
+    const h = Math.floor(t / 3600);
+    const m = Math.floor((t % 3600) / 60);
     const s = Math.floor(t % 60);
-    return m + ":" + String(s).padStart(2, "0");
+    const ss = String(s).padStart(2, "0");
+    if (h > 0) return h + ":" + String(m).padStart(2, "0") + ":" + ss;
+    return m + ":" + ss;
   }
 
   function render() {
@@ -207,7 +236,7 @@
         els.leftVal.textContent = Math.max(0, edge - video.currentTime).toFixed(1) + "s";
       }
     } else if (state.mode === "vod") {
-      els.leftVal.textContent = fmt(video.currentTime) + " / " + fmt(video.duration);
+      els.leftVal.textContent = fmt(video.currentTime) + " / " + fmt(getDuration(video));
       els.sec.textContent = video.paused ? "▶ Reproducir" : "⏸ Pausar";
     }
   }
