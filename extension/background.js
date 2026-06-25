@@ -7,11 +7,14 @@
 import { estimateLag } from "./lib/xcorr.js";
 
 const OFFSCREEN_URL = "offscreen.html";
-const CAPTURE_MS = 8000; // duración de cada clip
+// Clips largos: la captura es secuencial y los videos avanzan entre un clic y
+// otro, así que cada clip debe ser más largo que esa separación para que las
+// dos ventanas de contenido se solapen.
+const CAPTURE_MS = 20000;
 const TARGET_RATE = 8000; // Hz tras submuestrear (voz < 4 kHz)
 
 // Últimos clips capturados, máximo uno por videoId.
-let clips = []; // { videoId, samples, rate, pos, mode, ts }
+let clips = []; // { videoId, samples, rate, pos, startMs, mode, ts }
 
 async function ensureOffscreen() {
   if (chrome.offscreen.hasDocument && (await chrome.offscreen.hasDocument())) return;
@@ -43,18 +46,63 @@ function notify(tabId, text) {
 }
 
 /**
- * Desfase entre los dos videos a partir del lag de audio y las posiciones de
- * captura. Si v_a estaba en pos_a y v_b en pos_b, y la cross-correlación da L
- * (v_b retrasado L respecto a v_a), el mismo instante del evento cumple
- * pos_a(v_a) ≡ (pos_b + L)(v_b). Entonces, en la convención pos(high) − pos(low):
- *   delta = (high === a ? (pos_a − pos_b) − L : (pos_b − pos_a) + L)
+ * Correlaciona dos clips ALINEÁNDOLOS antes por tiempo de evento.
+ *
+ * Cada clip cubre, en epoch del evento real, [E, E+dur] con E = startMs + pos.
+ * Como la captura es secuencial (los videos avanzan entre un clic y otro), esas
+ * ventanas pueden no coincidir; recortamos ambos a su región de evento común y
+ * solo entonces cross-correlacionamos. El lag resultante es el ERROR residual de
+ * la estimación por hora de inicio (debería ser pequeño, < 1-2 s).
+ *
+ * @returns {{ok:boolean, reason?:string, overlap?:number, residual?:number,
+ *   confidence?:number, deltaCorr?:number, low?:string, high?:string}}
  */
-function computeDelta(a, b, lagSeconds) {
-  const [low, high] = [a.videoId, b.videoId].sort();
-  if (high === a.videoId) {
-    return { low, high, delta: a.pos - b.pos - lagSeconds };
+function correlateAligned(c1, c2) {
+  if (c1.pos == null || c2.pos == null || c1.startMs == null || c2.startMs == null) {
+    return { ok: false, reason: "faltan posición/hora de inicio (¿VOD de directo?)" };
   }
-  return { low, high, delta: b.pos - a.pos + lagSeconds };
+  const rate = Math.min(c1.rate, c2.rate);
+  const dur1 = c1.samples.length / c1.rate;
+  const dur2 = c2.samples.length / c2.rate;
+  const e1 = c1.startMs / 1000 + c1.pos; // epoch-evento (s) del inicio del clip 1
+  const e2 = c2.startMs / 1000 + c2.pos;
+
+  const commonStart = Math.max(e1, e2);
+  const commonEnd = Math.min(e1 + dur1, e2 + dur2);
+  const overlap = commonEnd - commonStart;
+  if (overlap < 2) {
+    return { ok: false, reason: "los clips no se solapan", overlap };
+  }
+
+  const off1 = Math.max(0, Math.round((commonStart - e1) * rate));
+  const off2 = Math.max(0, Math.round((commonStart - e2) * rate));
+  const n = Math.floor(overlap * rate);
+  const seg1 = Float32Array.from(c1.samples.slice(off1, off1 + n));
+  const seg2 = Float32Array.from(c2.samples.slice(off2, off2 + n));
+
+  const r = estimateLag(seg1, seg2, rate);
+
+  // delta entre videos (convención pos(high) − pos(low)) = inicio(low) − inicio(high)
+  // (estimación por hora de inicio) MÁS la corrección residual del audio.
+  const [low, high] = [c1.videoId, c2.videoId].sort();
+  const startLow = low === c1.videoId ? c1.startMs : c2.startMs;
+  const startHigh = high === c1.videoId ? c1.startMs : c2.startMs;
+  const deltaInicio = (startLow - startHigh) / 1000;
+  // r.lagSeconds: seg2 retrasado respecto a seg1. La corrección al delta se
+  // CALIBRA con la prueba real (puede requerir invertir el signo).
+  const sign = high === c2.videoId ? 1 : -1;
+  const deltaCorr = deltaInicio + sign * r.lagSeconds;
+
+  return {
+    ok: true,
+    overlap,
+    residual: r.lagSeconds,
+    confidence: r.confidence,
+    deltaInicio,
+    deltaCorr,
+    low,
+    high,
+  };
 }
 
 chrome.action.onClicked.addListener(async (tab) => {
@@ -78,6 +126,7 @@ chrome.action.onClicked.addListener(async (tab) => {
       samples: res.samples,
       rate: res.sampleRate,
       pos: state ? state.currentTime : null,
+      startMs: state ? state.startMs : null,
       mode: state ? state.mode : null,
       ts: Date.now(),
     };
@@ -91,26 +140,27 @@ chrome.action.onClicked.addListener(async (tab) => {
       return;
     }
 
-    // Dos clips de videos distintos → correlacionar.
+    // Dos clips de videos distintos → correlacionar (alineados por evento).
     const [c1, c2] = clips;
     if (c1.videoId === c2.videoId) {
       notify(tab.id, "🎧 Capturado. Falta la otra pestaña.");
       return;
     }
-    const r = estimateLag(Float32Array.from(c1.samples), Float32Array.from(c2.samples), c1.rate);
-    const { low, high, delta } = computeDelta(c1, c2, r.lagSeconds);
-
-    if (r.confidence < 0.15) {
+    const out = correlateAligned(c1, c2);
+    if (!out.ok) {
+      notify(tab.id, `⚠ No se pudo correlacionar: ${out.reason}` + (out.overlap != null ? ` (solape ${out.overlap.toFixed(1)}s)` : ""));
+      return;
+    }
+    if (out.confidence < 0.15) {
       notify(
         tab.id,
-        `⚠ Audio no coincide (conf ${r.confidence.toFixed(2)}). ¿Son el mismo momento y ambos sonando?`
+        `⚠ Audio no coincide (conf ${out.confidence.toFixed(2)}, solape ${out.overlap.toFixed(1)}s). ¿Ambos sonando y casi cuadrados?`
       );
       return;
     }
     notify(
       tab.id,
-      `🔊 lagAudio ${r.lagSeconds.toFixed(2)}s · conf ${r.confidence.toFixed(2)} · Δ calculado ${delta.toFixed(1)}s ` +
-        `(pos ${c1.videoId.slice(0, 4)}=${c1.pos != null ? c1.pos.toFixed(1) : "?"}, ${c2.videoId.slice(0, 4)}=${c2.pos != null ? c2.pos.toFixed(1) : "?"})`
+      `🔊 residual ${out.residual.toFixed(2)}s · conf ${out.confidence.toFixed(2)} · solape ${out.overlap.toFixed(1)}s · Δinicio ${out.deltaInicio.toFixed(1)} → Δcorr ${out.deltaCorr.toFixed(1)}s`
     );
   } catch (e) {
     notify(tab.id, "✗ Captura falló: " + String((e && e.message) || e));
