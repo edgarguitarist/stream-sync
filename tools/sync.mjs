@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { estimateLag } from "../extension/lib/xcorr.js";
 import { readWavMono } from "./wav.mjs";
-import { downloadAudioSection, fetchMeta } from "./ytaudio.mjs";
+import { downloadAudioSectionAsync, fetchMetaAsync } from "./ytaudio.mjs";
 
 /**
  * Sincroniza N videos contra el PRIMERO (la referencia). Para cada otro video
@@ -19,7 +19,7 @@ import { downloadAudioSection, fetchMeta } from "./ytaudio.mjs";
  * @returns {{master:string, posMaster:number, win:number, startMs:number|null,
  *   duration:number|null, items:Array<{id,delta,confidence,lagSeconds,posF,startMs,duration}>}}
  */
-export function computeMulti(o) {
+export async function computeMulti(o) {
   const ids = o.ids;
   const pos = o.pos != null ? o.pos : 600;
   const win = o.win != null ? o.win : 30;
@@ -29,7 +29,8 @@ export function computeMulti(o) {
   const dir = o.dir || mkdtempSync(join(tmpdir(), "ytds-multi-"));
   try {
     const master = ids[0];
-    const metas = ids.map((id) => (align ? fetchMeta(id) : null));
+    // Metadatos de todos los videos EN PARALELO.
+    const metas = align ? await Promise.all(ids.map((id) => fetchMetaAsync(id))) : ids.map(() => null);
     const startMaster = metas[0] && metas[0].startMs;
     // Segundos que cada video empezó DESPUÉS de la referencia (0 si no se alinea).
     const shifts = ids.map((_, i) =>
@@ -37,20 +38,23 @@ export function computeMulti(o) {
     );
     const maxShift = Math.max(0, ...shifts);
     const posMaster = pos + maxShift; // así toda posF = posMaster − shift ≥ pos
+    const positions = ids.map((_, i) => (i === 0 ? posMaster : Math.max(0, posMaster - shifts[i])));
 
-    const M = readWavMono(downloadAudioSection(master, posMaster, win, rate, dir));
+    // Descargar el audio de TODOS los videos EN PARALELO (≈ el tiempo de uno solo).
+    const wavs = await Promise.all(ids.map((id, i) => downloadAudioSectionAsync(id, positions[i], win, rate, dir)));
+    const M = readWavMono(wavs[0]);
+
     const items = [];
     for (let i = 1; i < ids.length; i++) {
-      const posF = Math.max(0, posMaster - shifts[i]);
-      const F = readWavMono(downloadAudioSection(ids[i], posF, win, rate, dir));
+      const F = readWavMono(wavs[i]);
       const sr = Math.min(M.sampleRate, F.sampleRate);
       const r = estimateLag(M.samples, F.samples, sr);
       items.push({
         id: ids[i],
-        delta: posMaster - posF - r.lagSeconds, // cuánto va la referencia por delante
+        delta: positions[0] - positions[i] - r.lagSeconds, // cuánto va la referencia por delante
         confidence: r.confidence,
         lagSeconds: r.lagSeconds,
-        posF,
+        posF: positions[i],
         startMs: metas[i] ? metas[i].startMs : null,
         duration: metas[i] ? metas[i].duration : null,
       });
@@ -83,7 +87,7 @@ export function computeMulti(o) {
  * @param {boolean}[o.align=true] pre-alinear posB con la hora de inicio del directo
  * @param {string} [o.dir]       carpeta temporal (se crea/borra si no se pasa)
  */
-export function computeSync(o) {
+export async function computeSync(o) {
   const { idA, idB } = o;
   const pos = o.pos != null ? o.pos : 600;
   const win = o.win != null ? o.win : 30;
@@ -98,8 +102,7 @@ export function computeSync(o) {
     let metaA = null, metaB = null;
 
     if (o.posA == null && o.posB == null && align) {
-      metaA = fetchMeta(idA);
-      metaB = fetchMeta(idB);
+      [metaA, metaB] = await Promise.all([fetchMetaAsync(idA), fetchMetaAsync(idB)]);
       if (metaA.startMs && metaB.startMs) {
         posB = posA - (metaB.startMs - metaA.startMs) / 1000;
       }
@@ -109,8 +112,12 @@ export function computeSync(o) {
     posA -= shift;
     posB -= shift;
 
-    const A = readWavMono(downloadAudioSection(idA, posA, win, rate, dir));
-    const B = readWavMono(downloadAudioSection(idB, posB, win, rate, dir));
+    const [wavA, wavB] = await Promise.all([
+      downloadAudioSectionAsync(idA, posA, win, rate, dir),
+      downloadAudioSectionAsync(idB, posB, win, rate, dir),
+    ]);
+    const A = readWavMono(wavA);
+    const B = readWavMono(wavB);
     const sr = Math.min(A.sampleRate, B.sampleRate);
     const r = estimateLag(A.samples, B.samples, sr);
     const delta = posA - posB - r.lagSeconds;

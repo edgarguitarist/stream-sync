@@ -29,7 +29,7 @@ async function main() {
     console.error("uso: node tools/sync-probe.mjs <urlA> <urlB> [--pos 600] [--win 30] [--rate 8000] [--posA n --posB n] [--no-align]");
     process.exit(1);
   }
-  const out = computeSync({
+  const out = await computeSync({
     idA: ytId(a._[0]),
     idB: ytId(a._[1]),
     pos: parseFloat(a.pos || "600"),

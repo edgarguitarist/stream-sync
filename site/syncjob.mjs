@@ -6,7 +6,7 @@ import { computeMulti } from "../tools/sync.mjs";
 const [, , idsArg, pos, win] = process.argv;
 const ids = (idsArg || "").split(",").filter(Boolean);
 try {
-  const out = computeMulti({ ids, pos: Number(pos) || 600, win: Number(win) || 30 });
+  const out = await computeMulti({ ids, pos: Number(pos) || 600, win: Number(win) || 30 });
   process.stdout.write(JSON.stringify(out));
 } catch (e) {
   process.stdout.write(JSON.stringify({ error: String((e && e.message) || e) }));
