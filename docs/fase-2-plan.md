@@ -125,5 +125,7 @@ extension/
 
 - Subir la confianza (clips más largos / mejor ventana de voz) — 0.38 funciona pero
   hay margen. Quizá refinar el residual con interpolación parabólica del pico.
-- Migrar `ScriptProcessorNode` → `AudioWorkletNode` (solo es un warning, no rompe).
+- ✅ Migrado `ScriptProcessorNode` → `AudioWorkletNode` (`capture-worklet.js` +
+  `offscreen.js`). Avisa "started" en el primer audio para anclar el reloj con
+  precisión. (Verificar tras recargar que ya no sale el warning.)
 - Mantener vivo el SW entre los dos clics (o persistir el primer clip) por si se duerme.

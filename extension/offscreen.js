@@ -67,20 +67,26 @@ async function capturePcm(streamId, ms, targetRate) {
   // reconectar el stream a la salida, el usuario sigue oyendo normalmente.
   src.connect(ctx.destination);
 
-  // ScriptProcessor (deprecado pero universal) para leer las muestras crudas.
-  const proc = ctx.createScriptProcessor(4096, 1, 1);
+  // AudioWorklet para leer las muestras crudas (sin bloquear el hilo principal).
+  await ctx.audioWorklet.addModule(chrome.runtime.getURL("capture-worklet.js"));
+  const node = new AudioWorkletNode(ctx, "ytds-capture");
   const chunks = [];
   let wallStart = null; // reloj de pared del PRIMER bloque de audio real
-  proc.onaudioprocess = (e) => {
-    if (wallStart === null) wallStart = Date.now();
-    chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+  node.port.onmessage = (e) => {
+    if (e.data === "started") {
+      if (wallStart === null) wallStart = Date.now();
+      return;
+    }
+    chunks.push(e.data); // Float32Array (transferida)
   };
-  src.connect(proc);
-  proc.connect(ctx.destination);
+  src.connect(node);
+  node.connect(ctx.destination);
 
   await new Promise((r) => setTimeout(r, ms));
+  node.port.postMessage("flush"); // vaciar lo último acumulado
+  await new Promise((r) => setTimeout(r, 60));
 
-  proc.disconnect();
+  node.disconnect();
   src.disconnect();
   stream.getTracks().forEach((t) => t.stop());
   const fromRate = ctx.sampleRate;
