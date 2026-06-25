@@ -134,13 +134,16 @@
     "s" + Math.floor(Math.random() * 1e9);
   const PRESENCE_PREFIX = "ytds:presence:";
   const PAIR_PREFIX = "ytds:pair:";
+  const CMD_KEY = "ytds:cmd"; // canal de comandos play/pausa hacia la pareja
   const PRESENCE_TTL = 6000; // ms; una pestaña está "viva" si su heartbeat es reciente
 
   const sync = {
     partner: null, // presencia de la otra pestaña emparejada, o null
     appliedFor: null, // videoId de pareja para el que ya auto-sincronicé
     best: null, // mejor desfase disponible { low, high, delta, source }, o null
+    mismatch: false, // hay otra pestaña pero de tipo distinto (VOD vs directo)
     suppressUntil: 0, // ignora 'seeked' propios (de applyDelta) hasta este instante
+    suppressPlayUntil: 0, // ignora 'play'/'pause' propios (de la sync) hasta este instante
   };
 
   let autosaveTimer = null;
@@ -224,13 +227,26 @@
     return live;
   }
 
-  /** Encuentra la otra pestaña abierta con un video distinto (la pareja). */
+  /**
+   * Encuentra la pareja: otra pestaña abierta con un video distinto Y DEL MISMO
+   * TIPO (ambos VOD o ambos directo, nunca mezclados). Si solo hay una de tipo
+   * distinto, no empareja y marca `mismatch` para avisar.
+   */
   async function refreshPartner() {
     const me = currentVideoId();
-    const others = (await readPresences())
-      .filter((p) => p.sid !== SESSION_ID && p.videoId && p.videoId !== me)
+    const others = (await readPresences()).filter(
+      (p) => p.sid !== SESSION_ID && p.videoId && p.videoId !== me
+    );
+    const sameType = others
+      .filter((p) => p.mode && state.mode && p.mode === state.mode)
       .sort((a, b) => b.updated - a.updated);
-    sync.partner = others[0] || null;
+    if (sameType[0]) {
+      sync.partner = sameType[0];
+      sync.mismatch = false;
+    } else {
+      sync.partner = null;
+      sync.mismatch = others.some((p) => p.mode && state.mode && p.mode !== state.mode);
+    }
     return sync.partner;
   }
 
@@ -311,24 +327,33 @@
     return true;
   }
 
-  /** Diagnóstico Fase 2: pide al service worker capturar 3 s de audio y reporta. */
-  async function captureTest() {
-    toast("Capturando 3 s de audio…");
-    try {
-      const res = await chrome.runtime.sendMessage({ type: "ytds-capture-test", ms: 3000 });
-      if (!res || !res.ok) {
-        toast("✗ Captura falló: " + ((res && res.error) || "sin respuesta"));
+  /**
+   * Diagnóstico Fase 2: la captura debe dispararse desde el ÍCONO de la extensión
+   * en la barra (eso concede activeTab; un click dentro de la página no basta).
+   * Aquí solo instruimos; el resultado llega por mensaje desde el service worker.
+   */
+  function captureTest() {
+    toast(
+      "Para capturar, pulsa el ícono de YT Dual Sync ↗ en la barra de Chrome (el video debe estar sonando).",
+      6000
+    );
+  }
+
+  // Resultado de la captura disparada desde el ícono (lo envía background.js).
+  if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage) {
+    chrome.runtime.onMessage.addListener((msg) => {
+      if (!msg || msg.type !== "ytds-capture-result") return;
+      if (!msg.ok) {
+        toast("✗ Captura falló: " + (msg.error || "?"), 6000);
         return;
       }
-      const heard = res.rms > 0.0005;
+      const heard = msg.rms > 0.0005;
       toast(
         (heard ? "✓ Audio OK" : "⚠ Silencio (¿pestaña muteada?)") +
-          ` · ${res.samples} muestras @ ${res.sampleRate}Hz · rms ${res.rms.toFixed(4)}`,
+          ` · ${msg.samples} muestras @ ${msg.sampleRate}Hz · rms ${msg.rms.toFixed(4)}`,
         6000
       );
-    } catch (e) {
-      toast("✗ Error: " + String((e && e.message) || e));
-    }
+    });
   }
 
   /** Reaplica manualmente el mejor desfase disponible (botón Re-sincronizar). */
@@ -489,8 +514,13 @@
   function renderSync() {
     if (!els.syncStatus) return;
     if (!sync.partner) {
-      els.syncStatus.textContent = "buscando segunda pestaña…";
-      els.syncStatus.className = "ytds-sync-status";
+      if (sync.mismatch) {
+        els.syncStatus.textContent = "⚠ la otra pestaña es de otro tipo (VOD ≠ directo)";
+        els.syncStatus.className = "ytds-sync-status mismatch";
+      } else {
+        els.syncStatus.textContent = "buscando segunda pestaña…";
+        els.syncStatus.className = "ytds-sync-status";
+      }
       els.applySync.disabled = true;
       return;
     }
@@ -611,9 +641,47 @@
     });
   }
 
+  /** Engancha 'play'/'pause' para replicarlos en la pareja (una vez por elemento). */
+  function hookPlayPause() {
+    const video = getVideo();
+    if (!video || video.__ytdsPlayHooked) return;
+    video.__ytdsPlayHooked = true;
+    const relay = (action) => () => {
+      if (Date.now() < sync.suppressPlayUntil) return; // cambio causado por la sync
+      if (!sync.partner) return;
+      sendCommand(action);
+    };
+    video.addEventListener("play", relay("play"));
+    video.addEventListener("pause", relay("pause"));
+  }
+
+  /** Envía a la pareja un comando de reproducción ('play' | 'pause'). */
+  async function sendCommand(action) {
+    if (!storageOk() || !sync.partner) return;
+    try {
+      await chrome.storage.local.set({
+        [CMD_KEY]: { to: sync.partner.sid, from: SESSION_ID, action, ts: Date.now() },
+      });
+    } catch (_) {}
+  }
+
+  /** Aplica un comando de reproducción recibido de la pareja, sin rebotar. */
+  function applyCommand(cmd) {
+    const video = getVideo();
+    if (!video) return;
+    sync.suppressPlayUntil = Date.now() + 1000;
+    if (cmd.action === "pause") {
+      video.pause();
+    } else if (cmd.action === "play") {
+      const p = video.play();
+      if (p && p.catch) p.catch(() => {});
+    }
+  }
+
   /** Latido de coordinación: publica presencia, busca pareja y auto-sincroniza. */
   async function syncTick() {
     hookSeek();
+    hookPlayPause();
     await heartbeat();
     await refreshPartner();
     sync.best = sync.partner ? await bestDelta() : null;
@@ -643,6 +711,7 @@
     sync.partner = null;
     sync.appliedFor = null;
     sync.best = null;
+    sync.mismatch = false;
     if (els.badge) {
       els.badge.textContent = "…";
       els.badge.className = "ytds-badge";
@@ -650,6 +719,15 @@
     resolveMode();
     renderSync();
   });
+
+  // Comandos play/pausa de la pareja: aplicamos en cuanto cambian en la pizarra.
+  if (storageOk() && chrome.storage.onChanged) {
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area !== "local" || !changes[CMD_KEY]) return;
+      const cmd = changes[CMD_KEY].newValue;
+      if (cmd && cmd.to === SESSION_ID) applyCommand(cmd);
+    });
+  }
 
   // Al cerrar/ocultar la pestaña, retiramos nuestra presencia de la pizarra.
   window.addEventListener("pagehide", () => {

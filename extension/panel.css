@@ -193,6 +193,10 @@
   color: #80d8a0;
 }
 
+.ytds-sync-status.mismatch {
+  color: #ffcc66;
+}
+
 .ytds-applysync {
   all: unset;
   display: block;

@@ -27,20 +27,19 @@ async function captureTab(tabId, ms) {
   return chrome.runtime.sendMessage({ target: "offscreen", type: "capture", streamId, ms });
 }
 
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (!msg || msg.target === "offscreen") return; // mensajes para el offscreen no son nuestros
-
-  if (msg.type === "ytds-capture-test") {
-    (async () => {
-      try {
-        const tabId = sender.tab && sender.tab.id;
-        if (tabId == null) throw new Error("sin tabId del emisor");
-        const res = await captureTab(tabId, msg.ms || 3000);
-        sendResponse({ ok: true, ...res });
-      } catch (e) {
-        sendResponse({ ok: false, error: String((e && e.message) || e) });
-      }
-    })();
-    return true; // respuesta asíncrona
+// El click en el ícono de la barra "invoca" la extensión para la pestaña activa
+// y concede el permiso activeTab que tabCapture exige (un click dentro de la
+// página no basta). Capturamos y devolvemos el resultado al content script.
+chrome.action.onClicked.addListener(async (tab) => {
+  if (!tab || tab.id == null) return;
+  try {
+    const res = await captureTab(tab.id, 3000);
+    chrome.tabs.sendMessage(tab.id, { type: "ytds-capture-result", ok: true, ...res });
+  } catch (e) {
+    chrome.tabs.sendMessage(tab.id, {
+      type: "ytds-capture-result",
+      ok: false,
+      error: String((e && e.message) || e),
+    });
   }
 });

@@ -64,6 +64,10 @@ El desfase se **aplica solo** al emparejar (la pestaña del video "seguidor" se 
 
 Prioridad: **guardado** (manual/autosave) › **estimado por hora de inicio**.
 
+**Solo el mismo tipo**: nunca empareja un VOD con un directo. Si la otra pestaña es de tipo distinto, avisa (`⚠ VOD ≠ directo`) y no sincroniza.
+
+**Play/pausa enlazados**: al pausar o reproducir un video, la otra pestaña hace lo mismo (vía un canal de comandos en `chrome.storage`), para no perder el sync.
+
 ## Estructura
 
 ```

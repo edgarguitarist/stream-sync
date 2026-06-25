@@ -92,11 +92,13 @@ extension/
 ### Paso 1 — andamiaje de captura ⏳ (a probar en el navegador)
 
 - `background.js` (service worker) + `offscreen.html/js` + permisos `tabCapture`/`offscreen`.
-- Botón **🎧 Probar captura de audio** en el panel: captura 3 s de la pestaña activa
-  y reporta `samples / sampleRate / rms`. Valida que `tabCapture` entrega PCM legible.
-- **Riesgo conocido a observar**: `getMediaStreamId` puede exigir un *user gesture*
-  que quizá no sobrevive al pasar del botón → service worker. Si el toast reporta un
-  error de gesto, se cambia el disparador al ícono de la extensión (`chrome.action`).
+- La captura se dispara desde el **ícono de la extensión** (`chrome.action.onClicked`):
+  eso "invoca" la extensión y concede `activeTab`, que `tabCapture` exige. Un click
+  dentro de la página NO basta (error: *"Extension has not been invoked… see activeTab"*).
+- Reporta `samples / sampleRate / rms` en un toast. Valida que `tabCapture` entrega PCM.
+- **Implicación para el flujo de 2 pestañas**: `activeTab` se concede por invocación y
+  por pestaña → para VOD, capturar SECUENCIAL (invocar el ícono en cada pestaña), no
+  simultáneo. El SW acumula ambos clips y correlaciona cuando tiene los dos.
 
 ### Pendiente
 

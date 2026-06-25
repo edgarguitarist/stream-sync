@@ -3,7 +3,10 @@
   "name": "YT Dual Sync",
   "version": "0.1.0",
   "description": "Sincroniza dos directos de YouTube para ver ambos POV alineados en el tiempo.",
-  "permissions": ["storage", "tabCapture", "offscreen"],
+  "permissions": ["storage", "tabCapture", "offscreen", "activeTab"],
+  "action": {
+    "default_title": "YT Dual Sync — capturar audio (paso 1)"
+  },
   "background": {
     "service_worker": "background.js",
     "type": "module"
