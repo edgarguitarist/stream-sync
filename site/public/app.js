@@ -10,7 +10,19 @@ let deltas = []; // segundos que el maestro va por delante de cada video (deltas
 let driftTimer = null;
 let durationMaster = 0;
 let seeking = false; // el usuario está arrastrando el slider
+let wantPlay = false; // intención del usuario (reproducir / pausar) — la barrera la respeta
 let lastUrls = []; // para el botón "♺ audio"
+
+/** Columnas y filas del grid para que N videos quepan sin scroll. */
+function gridDims(n) {
+  if (n <= 1) return [1, 1];
+  if (n === 2) return [2, 1];
+  if (n <= 4) return [2, 2];
+  if (n <= 6) return [3, 2];
+  if (n <= 9) return [3, 3];
+  const cols = Math.ceil(Math.sqrt(n));
+  return [cols, Math.ceil(n / cols)];
+}
 
 window.onYouTubeIframeAPIReady = () => { apiReady = true; };
 (function loadApi() {
@@ -84,11 +96,14 @@ function buildPlayers(ids, pos) {
     // Limpiar reproductores y celdas anteriores.
     players.forEach((p) => { try { p.destroy(); } catch {} });
     players = [];
+    wantPlay = false;
     const stage = $("stage");
     stage.innerHTML = "";
     stage.hidden = false;
     $("controls").hidden = false;
-    stage.style.setProperty("--cols", ids.length <= 1 ? 1 : ids.length <= 4 ? 2 : 3);
+    const [cols, rows] = gridDims(ids.length);
+    stage.style.setProperty("--cols", cols);
+    stage.style.setProperty("--rows", rows);
 
     const common = { rel: 0, modestbranding: 1, playsinline: 1, enablejsapi: 1, origin: location.origin };
     const onError = (e) => setStatus("YouTube no permite incrustar uno de los videos (código " + e.data + ").", "err");
@@ -96,17 +111,17 @@ function buildPlayers(ids, pos) {
     ids.forEach((id, i) => {
       const cell = document.createElement("section");
       cell.className = "cell";
-      const tag = i === 0 ? "referencia" : `Δ ${deltas[i].toFixed(1)}s`;
+      const tag = i === 0 ? `<span class="tag ref">referencia</span>` : `<span class="tag">Δ ${deltas[i].toFixed(1)}s</span>`;
       cell.innerHTML =
-        `<div class="vidwrap"><div id="player${i}"></div></div>` +
-        `<div class="vidlabel"><span class="tag">${tag}</span>` +
+        `<div id="player${i}"></div>` +
+        `<div class="vidlabel">${tag}` +
         `<button class="mute" data-idx="${i}" title="Silenciar este video">🔊</button></div>`;
       stage.appendChild(cell);
 
       const isMaster = i === 0;
       players[i] = new YT.Player(`player${i}`, {
         videoId: id,
-        playerVars: { ...common, controls: isMaster ? 1 : 0 },
+        playerVars: { ...common, controls: 0 }, // control unificado abajo
         events: {
           onError,
           onReady: (e) => {
@@ -139,34 +154,45 @@ function ready() {
 
 function startDriftLoop() {
   clearInterval(driftTimer);
+  const BUF = YT.PlayerState.BUFFERING, PLAY = YT.PlayerState.PLAYING, END = YT.PlayerState.ENDED;
   driftTimer = setInterval(() => {
     if (!ready()) return;
-    const master = players[0];
-    const tM = master.getCurrentTime();
-    const sM = master.getPlayerState();
+    const states = players.map((p) => p.getPlayerState());
+    const tM = players[0].getCurrentTime();
+    // Alguien cargando (buffering) o aún sin arrancar mientras queremos reproducir.
+    const anyStalled = states.some((s, i) => s === BUF || (wantPlay && i > 0 && s !== PLAY && s !== END && Math.abs(players[i].getCurrentTime() - Math.max(0, tM - deltas[i])) > 1.5));
 
+    // Corregir deriva solo en los que NO están cargando (re-seekear uno que
+    // carga lo empeora).
     for (let i = 1; i < players.length; i++) {
-      const p = players[i];
+      if (states[i] === BUF) continue;
       const target = Math.max(0, tM - deltas[i]);
-      if (Math.abs(p.getCurrentTime() - target) > 0.3) p.seekTo(target, true);
-      const sP = p.getPlayerState();
-      if (sM === YT.PlayerState.PLAYING && sP !== YT.PlayerState.PLAYING) p.playVideo();
-      // ENDED del maestro cuenta como pausa para los seguidores.
-      if ((sM === YT.PlayerState.PAUSED || sM === YT.PlayerState.ENDED) && sP === YT.PlayerState.PLAYING) p.pauseVideo();
+      if (Math.abs(players[i].getCurrentTime() - target) > 0.4) players[i].seekTo(target, true);
+    }
+
+    // Barrera: si queremos reproducir pero alguien está cargando, ESPERAMOS
+    // (pausamos a los que van) hasta que todos estén listos; entonces, todos.
+    if (wantPlay && anyStalled) {
+      players.forEach((p, i) => { if (states[i] === PLAY) p.pauseVideo(); });
+    } else if (wantPlay) {
+      players.forEach((p, i) => { if (states[i] !== PLAY && states[i] !== END) p.playVideo(); });
+    } else {
+      players.forEach((p, i) => { if (states[i] === PLAY) p.pauseVideo(); });
     }
 
     if (!seeking) $("seek").value = tM;
-    $("time").textContent = `${fmt(tM)} / ${fmt(durationMaster)}`;
-    $("playpause").textContent = sM === YT.PlayerState.PLAYING ? "⏸ Pausar" : "▶ Reproducir";
-  }, 400);
+    const waiting = wantPlay && anyStalled ? " · esperando…" : "";
+    $("time").textContent = `${fmt(tM)} / ${fmt(durationMaster)}${waiting}`;
+    $("playpause").textContent = wantPlay ? "⏸ Pausar" : "▶ Reproducir";
+  }, 300);
 }
 
 // --- Controles unificados ---------------------------------------------------
 
 function togglePlay() {
   if (!ready()) return;
-  const playing = players[0].getPlayerState() === YT.PlayerState.PLAYING;
-  players.forEach((p) => (playing ? p.pauseVideo() : p.playVideo()));
+  wantPlay = !wantPlay; // intención; la barrera del bucle la hace cumplir
+  players.forEach((p) => (wantPlay ? p.playVideo() : p.pauseVideo()));
 }
 
 function seekTo(t) {
