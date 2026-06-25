@@ -146,7 +146,16 @@
     partner: null, // presencia de la otra pestaña emparejada, o null
     appliedFor: null, // videoId de pareja para el que ya auto-sincronicé
     record: null, // desfase guardado para el par actual, o null
+    suppressUntil: 0, // ignora 'seeked' propios (de applySync) hasta este instante
   };
+
+  let autosaveTimer = null;
+  /** Programa un guardado automático del desfase tras un breve reposo. */
+  function scheduleAutosave() {
+    if (!sync.partner) return;
+    clearTimeout(autosaveTimer);
+    autosaveTimer = setTimeout(() => saveSync(true), 1200);
+  }
 
   function storageOk() {
     return typeof chrome !== "undefined" && chrome.storage && chrome.storage.local;
@@ -241,7 +250,7 @@
   }
 
   /** Guarda el desfase actual del par para reusarlo en el futuro. */
-  async function saveSync() {
+  async function saveSync(auto) {
     const me = currentVideoId();
     const video = getVideo();
     if (!me || !video || !sync.partner) return false;
@@ -255,7 +264,8 @@
       await chrome.storage.local.set({
         [pairKey(me, partner.videoId)]: { low, high, delta, savedAt: Date.now() },
       });
-      toast("Sync guardado para este par ✓");
+      sync.record = { low, high, delta, savedAt: Date.now() };
+      toast(auto ? "Sync guardado automáticamente ✓" : "Sync guardado ✓");
       renderSync();
       return true;
     } catch (_) {
@@ -274,6 +284,7 @@
     // Buscamos pos(high) − pos(low) = delta, ajustando únicamente esta pestaña.
     let target = me === rec.low ? pPos - rec.delta : pPos + rec.delta;
     target = clamp(target, 0, maxTime(video));
+    sync.suppressUntil = Date.now() + 1500; // no auto-guardar este seek propio
     video.currentTime = target;
     sync.appliedFor = sync.partner.videoId;
     if (announce) toast("Sincronizado automáticamente ✨");
@@ -335,10 +346,7 @@
         </div>
         <div class="ytds-sync">
           <div class="ytds-sync-status" data-syncstatus>buscando segunda pestaña…</div>
-          <div class="ytds-sync-btns">
-            <button class="ytds-savesync" data-savesync title="Guardar el desfase actual de este par">💾 Guardar</button>
-            <button class="ytds-applysync" data-applysync title="Reaplicar el desfase guardado">✨ Aplicar</button>
-          </div>
+          <button class="ytds-applysync" data-applysync title="Reaplicar el desfase guardado de este par">✨ Re-sincronizar</button>
         </div>
         <p class="ytds-hint" data-hint></p>
       </div>
@@ -365,11 +373,9 @@
       sec: panel.querySelector("[data-sec]"),
       hint: panel.querySelector("[data-hint]"),
       syncStatus: panel.querySelector("[data-syncstatus]"),
-      saveSync: panel.querySelector("[data-savesync]"),
       applySync: panel.querySelector("[data-applysync]"),
     };
 
-    els.saveSync.addEventListener("click", () => saveSync());
     els.applySync.addEventListener("click", () => applySync(true));
 
     document.body.appendChild(panel);
@@ -431,18 +437,16 @@
     if (!sync.partner) {
       els.syncStatus.textContent = "buscando segunda pestaña…";
       els.syncStatus.className = "ytds-sync-status";
-      els.saveSync.disabled = true;
       els.applySync.disabled = true;
       return;
     }
-    els.saveSync.disabled = false;
     if (sync.record) {
       els.applySync.disabled = false;
       els.syncStatus.textContent = "🔗 emparejado · guardado (Δ " + sync.record.delta.toFixed(1) + "s)";
       els.syncStatus.className = "ytds-sync-status paired saved";
     } else {
       els.applySync.disabled = true;
-      els.syncStatus.textContent = "🔗 emparejado · sin sync guardado";
+      els.syncStatus.textContent = "🔗 emparejado · cuadra y se guarda solo";
       els.syncStatus.className = "ytds-sync-status paired";
     }
   }
@@ -537,8 +541,20 @@
     if (!state.mode) modeTimer = setInterval(tryDetect, 500);
   }
 
+  /** Engancha el evento 'seeked' del video para autosave (una sola vez por elemento). */
+  function hookSeek() {
+    const video = getVideo();
+    if (!video || video.__ytdsSeekHooked) return;
+    video.__ytdsSeekHooked = true;
+    video.addEventListener("seeked", () => {
+      if (Date.now() < sync.suppressUntil) return; // seek causado por applySync
+      scheduleAutosave();
+    });
+  }
+
   /** Latido de coordinación: publica presencia, busca pareja y auto-sincroniza. */
   async function syncTick() {
+    hookSeek();
     await heartbeat();
     await refreshPartner();
     sync.record = await loadPairRecord();
