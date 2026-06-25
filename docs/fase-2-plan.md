@@ -89,8 +89,19 @@ extension/
 - `extension/lib/xcorr.js` — FFT radix-2 + `estimateLag` (corre en navegador y Node).
 - `extension/lib/xcorr.test.mjs` — `node extension/lib/xcorr.test.mjs` (todo OK).
 
-### Pendiente (requiere probar en el navegador)
+### Paso 1 — andamiaje de captura ⏳ (a probar en el navegador)
 
 - `background.js` (service worker) + `offscreen.html/js` + permisos `tabCapture`/`offscreen`.
-- Captura simultánea de ambas pestañas y troceo de ~10 s de audio común.
-- Botón "Auto-sync" en el panel → ejecutar `estimateLag` → aplicar y `saveSync()`.
+- Botón **🎧 Probar captura de audio** en el panel: captura 3 s de la pestaña activa
+  y reporta `samples / sampleRate / rms`. Valida que `tabCapture` entrega PCM legible.
+- **Riesgo conocido a observar**: `getMediaStreamId` puede exigir un *user gesture*
+  que quizá no sobrevive al pasar del botón → service worker. Si el toast reporta un
+  error de gesto, se cambia el disparador al ícono de la extensión (`chrome.action`).
+
+### Pendiente
+
+- Identificar el `tabId` de la pareja (buscar por `videoId` con `chrome.tabs.query`).
+- Captura de AMBAS pestañas (secuencial para VOD: posicionar, reproducir, capturar
+  ~8 s de cada una). Resampleo a 16 kHz.
+- `estimateLag` sobre los dos clips → `{ lagSeconds, confidence }`.
+- Umbral de confianza: aplicar y `saveSync()` si supera; si no, avisar "no coincide".

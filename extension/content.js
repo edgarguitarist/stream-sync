@@ -311,6 +311,26 @@
     return true;
   }
 
+  /** Diagnóstico Fase 2: pide al service worker capturar 3 s de audio y reporta. */
+  async function captureTest() {
+    toast("Capturando 3 s de audio…");
+    try {
+      const res = await chrome.runtime.sendMessage({ type: "ytds-capture-test", ms: 3000 });
+      if (!res || !res.ok) {
+        toast("✗ Captura falló: " + ((res && res.error) || "sin respuesta"));
+        return;
+      }
+      const heard = res.rms > 0.0005;
+      toast(
+        (heard ? "✓ Audio OK" : "⚠ Silencio (¿pestaña muteada?)") +
+          ` · ${res.samples} muestras @ ${res.sampleRate}Hz · rms ${res.rms.toFixed(4)}`,
+        6000
+      );
+    } catch (e) {
+      toast("✗ Error: " + String((e && e.message) || e));
+    }
+  }
+
   /** Reaplica manualmente el mejor desfase disponible (botón Re-sincronizar). */
   async function applySync() {
     const d = await bestDelta();
@@ -378,6 +398,7 @@
         <div class="ytds-sync">
           <div class="ytds-sync-status" data-syncstatus>buscando segunda pestaña…</div>
           <button class="ytds-applysync" data-applysync title="Reaplicar el desfase guardado de este par">✨ Re-sincronizar</button>
+          <button class="ytds-captest" data-captest title="Diagnóstico Fase 2: captura 3 s del audio de ESTA pestaña (debe estar sonando)">🎧 Probar captura de audio</button>
         </div>
         <p class="ytds-hint" data-hint></p>
       </div>
@@ -405,9 +426,11 @@
       hint: panel.querySelector("[data-hint]"),
       syncStatus: panel.querySelector("[data-syncstatus]"),
       applySync: panel.querySelector("[data-applysync]"),
+      capTest: panel.querySelector("[data-captest]"),
     };
 
     els.applySync.addEventListener("click", () => applySync());
+    els.capTest.addEventListener("click", captureTest);
 
     document.body.appendChild(panel);
     restorePosition();
@@ -488,7 +511,7 @@
   }
 
   let toastEl, toastTimer;
-  function toast(msg) {
+  function toast(msg, ms) {
     if (!panel) return;
     if (!toastEl) {
       toastEl = document.createElement("div");
@@ -498,7 +521,7 @@
     toastEl.textContent = msg;
     toastEl.classList.add("show");
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => toastEl.classList.remove("show"), 2200);
+    toastTimer = setTimeout(() => toastEl.classList.remove("show"), ms || 2200);
   }
 
   // --- Arrastre del panel ----------------------------------------------------
