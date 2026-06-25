@@ -85,17 +85,24 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 }
 .vidlabel {
   position: absolute;
-  left: 6px;
-  bottom: 6px;
+  left: 8px;
+  top: 44px; /* justo debajo del nombre del streamer que muestra YouTube */
   z-index: 3;
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 3px 8px;
   border-radius: 6px;
-  background: rgba(0, 0, 0, 0.65);
+  background: rgba(0, 0, 0, 0.7);
   font-size: 11px;
   color: #cfcfcf;
+  opacity: 0; /* oculto; aparece al pasar el mouse por el video */
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+.cell:hover .vidlabel {
+  opacity: 1;
+  pointer-events: auto;
 }
 .vidlabel .tag.ref { color: #80d8a0; font-weight: 600; }
 .mute, .star {
