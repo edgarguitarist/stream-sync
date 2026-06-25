@@ -61,8 +61,28 @@
   color: #fff;
 }
 
-.ytds-min {
+.ytds-mute {
+  all: unset;
   margin-left: auto;
+  cursor: pointer;
+  width: 22px;
+  height: 20px;
+  line-height: 20px;
+  text-align: center;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.ytds-mute:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.ytds-mute.on {
+  background: rgba(255, 138, 128, 0.25);
+}
+
+.ytds-min {
+  cursor: pointer;
 }
 
 .ytds-min {

@@ -147,6 +147,7 @@
     suppressPlayUntil: 0, // ignora 'play'/'pause' propios (de la sync) hasta este instante
   };
 
+  let captureWasMuted = false; // estado de silencio a restaurar tras una captura
   let autosaveTimer = null;
   /** Programa un guardado automático del desfase tras un breve reposo. */
   function scheduleAutosave() {
@@ -367,6 +368,8 @@
         sendCommand("pause"); // congela a la pareja
         (async () => {
           if (v) {
+            captureWasMuted = v.muted; // desmutear temporal para captar audio
+            v.muted = false;
             const p = v.play();
             if (p && p.catch) p.catch(() => {});
             // Esperar a que el video realmente AVANCE (primer 'timeupdate' tras
@@ -398,6 +401,8 @@
           sync.suppressPlayUntil = Date.now() + 2000;
           if (typeof msg.pos === "number") v.currentTime = msg.pos;
           v.pause();
+          v.muted = captureWasMuted; // restaura el silencio que tuviera
+          renderMute();
         }
         sendResponse({ ok: true });
         return true;
@@ -483,6 +488,7 @@
       <div class="ytds-header" data-drag>
         <span class="ytds-title">YT Dual Sync</span>
         <span class="ytds-badge" data-badge>…</span>
+        <button class="ytds-mute" data-mute title="Silenciar este video (escucha solo el stream que quedó sincronizado)">🔊</button>
         <button class="ytds-min" title="Minimizar">–</button>
       </div>
       <div class="ytds-body">
@@ -528,11 +534,17 @@
       applySync: panel.querySelector("[data-applysync]"),
       forget: panel.querySelector("[data-forget]"),
       capTest: panel.querySelector("[data-captest]"),
+      mute: panel.querySelector("[data-mute]"),
     };
 
     els.applySync.addEventListener("click", () => applySync());
     els.forget.addEventListener("click", () => forgetSync());
     els.capTest.addEventListener("click", captureTest);
+    els.mute.addEventListener("click", () => {
+      const v = getVideo();
+      if (v) v.muted = !v.muted;
+      renderMute();
+    });
 
     document.body.appendChild(panel);
     restorePosition();
@@ -567,8 +579,18 @@
     return m + ":" + ss;
   }
 
+  /** Refleja el estado de silencio del video en el botón del panel. */
+  function renderMute() {
+    if (!els.mute) return;
+    const v = getVideo();
+    const muted = !!(v && v.muted);
+    els.mute.textContent = muted ? "🔇" : "🔊";
+    els.mute.classList.toggle("on", muted);
+  }
+
   function render() {
     if (!els.offset) return;
+    renderMute();
 
     const sign = state.offset > 0 ? "+" : "";
     els.offset.textContent = sign + state.offset.toFixed(1) + "s";

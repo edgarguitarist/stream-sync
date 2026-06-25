@@ -68,6 +68,8 @@ Prioridad: **guardado** (manual/autosave) › **estimado por hora de inicio**.
 
 **Play/pausa enlazados**: al pausar o reproducir un video, la otra pestaña hace lo mismo (vía un canal de comandos en `chrome.storage`), para no perder el sync.
 
+**Silenciar un stream** (🔊/🔇 en el panel): como los dos streamers están en una llamada con latencia entre ellos, solo uno de los audios coincide perfectamente con la acción común; el otro va un pelín corrido. Silencia el stream desfasado para escuchar solo el que cuadra. Durante el auto-sync por audio el silencio se levanta y restaura solo (la captura necesita oír ambos).
+
 ## Estructura
 
 ```
