@@ -365,16 +365,29 @@
         const v = getVideo();
         sync.suppressPlayUntil = Date.now() + 40000; // toda la captura
         sendCommand("pause"); // congela a la pareja
-        if (v) {
-          const p = v.play();
-          if (p && p.catch) p.catch(() => {});
-        }
-        sendResponse({
-          videoId: currentVideoId(),
-          currentTime: v ? v.currentTime : null,
-          startMs: getStartMs(),
-          mode: state.mode,
-        });
+        (async () => {
+          if (v) {
+            const p = v.play();
+            if (p && p.catch) p.catch(() => {});
+            // Esperar a que el video realmente AVANCE (primer 'timeupdate' tras
+            // play) para anclar posición y reloj en el mismo instante real.
+            await new Promise((res) => {
+              const onTU = () => {
+                v.removeEventListener("timeupdate", onTU);
+                res();
+              };
+              v.addEventListener("timeupdate", onTU);
+              setTimeout(res, 1500); // fallback
+            });
+          }
+          sendResponse({
+            videoId: currentVideoId(),
+            currentTime: v ? v.currentTime : null,
+            startMs: getStartMs(),
+            mode: state.mode,
+            wallAtPlay: Date.now(),
+          });
+        })();
         return true;
       }
       // Tras capturar: volvemos a la posición de inicio y pausamos.

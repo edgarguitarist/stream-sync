@@ -130,11 +130,19 @@ chrome.action.onClicked.addListener(async (tab) => {
 
     if (res && res.error) throw new Error(res.error);
 
+    // Posición EXACTA del inicio del clip: la posición al arrancar + el tiempo
+    // (a 1x) transcurrido hasta que entró el primer audio. Compensa el retraso
+    // variable entre el play y el inicio real de la captura.
+    let pos = prep ? prep.currentTime : null;
+    if (prep && prep.currentTime != null && prep.wallAtPlay != null && res.wallStart != null) {
+      pos = prep.currentTime + (res.wallStart - prep.wallAtPlay) / 1000;
+    }
+
     const clip = {
       videoId,
       samples: res.samples,
       rate: res.sampleRate,
-      pos: prep ? prep.currentTime : null,
+      pos,
       startMs: prep ? prep.startMs : null,
       mode: prep ? prep.mode : null,
       ts: Date.now(),

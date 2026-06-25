@@ -70,7 +70,9 @@ async function capturePcm(streamId, ms, targetRate) {
   // ScriptProcessor (deprecado pero universal) para leer las muestras crudas.
   const proc = ctx.createScriptProcessor(4096, 1, 1);
   const chunks = [];
+  let wallStart = null; // reloj de pared del PRIMER bloque de audio real
   proc.onaudioprocess = (e) => {
+    if (wallStart === null) wallStart = Date.now();
     chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
   };
   src.connect(proc);
@@ -96,5 +98,6 @@ async function capturePcm(streamId, ms, targetRate) {
     rms,
     count: full.length,
     durationMs: ms,
+    wallStart, // reloj de pared del inicio real del audio capturado
   };
 }
