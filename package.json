@@ -1,0 +1,13 @@
+{
+  "name": "yt-dual-sync",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Sincroniza N videos de YouTube (directos o VOD) alineando POV por audio, por el timer del juego (correlación visual de la franja) y por hora de inicio.",
+  "scripts": {
+    "site": "node site/server.mjs",
+    "sync-probe": "node tools/sync-probe.mjs",
+    "visual-probe": "node tools/visual-probe.mjs",
+    "timer-probe": "node tools/timer-probe.mjs"
+  }
+}

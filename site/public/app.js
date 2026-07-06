@@ -13,6 +13,17 @@ let seeking = false; // el usuario está arrastrando el slider
 let wantPlay = false; // intención del usuario (reproducir / pausar) — la barrera la respeta
 let principalIdx = -1; // video "principal": si ≥0, solo ese se escucha
 let lastUrls = []; // para el botón "♺ audio"
+let lastItems = []; // items del cálculo (delta/source/confidence) — para persistir ajustes
+let lastMaster = null;
+
+// Fuente del desfase de cada seguidor → etiqueta legible para la celda.
+function sourceLabel(it) {
+  if (!it) return "";
+  if (it.source === "timer") return `· timer ✓`;
+  if (it.source === "audio") return `· audio${it.confidence >= 0.25 ? "" : " ⚠"}`;
+  if (it.source === "manual") return `· manual ✎`;
+  return `· inicio ⚠`;
+}
 
 /** Columnas y filas del grid para que N videos quepan sin scroll. */
 function gridDims(n) {
@@ -93,9 +104,9 @@ async function doSync(restore = false) {
       res = await r.json();
       if (res.error) { setStatus("Error: " + res.error, "err"); return; }
       saveCache(key, res);
-      const confs = res.items.map((it) => it.confidence.toFixed(2)).join(", ");
-      setStatus(`Referencia + ${res.items.length} video(s) · conf [${confs}] — cargando…`,
-        res.items.every((it) => it.confidence >= 0.25) ? "ok" : "");
+      const srcs = res.items.map((it) => it.source || "inicio").join(", ");
+      const allGood = res.items.every((it) => it.source === "timer" || it.source === "audio");
+      setStatus(`Referencia + ${res.items.length} video(s) · fuentes [${srcs}] — cargando…`, allGood ? "ok" : "");
     } catch (e) {
       setStatus("Error de red: " + e, "err");
       return;
@@ -105,6 +116,8 @@ async function doSync(restore = false) {
   }
 
   deltas = [0, ...res.items.map((it) => it.delta)];
+  lastItems = res.items;
+  lastMaster = res.master;
   const ids = [res.master, ...res.items.map((it) => it.id)];
   // Al restaurar, retoma donde se quedó; en un Sincronizar explícito usa el campo pos.
   const sp = savedPos(key);
@@ -142,12 +155,21 @@ function buildPlayers(ids, pos) {
     ids.forEach((id, i) => {
       const cell = document.createElement("section");
       cell.className = "cell";
-      const tag = i === 0 ? `<span class="tag ref">referencia</span>` : `<span class="tag">Δ ${deltas[i].toFixed(1)}s</span>`;
+      const tag = i === 0
+        ? `<span class="tag ref">referencia</span>`
+        : `<span class="tag">Δ ${deltas[i].toFixed(1)}s <span class="src">${sourceLabel(lastItems[i - 1])}</span></span>`;
+      // Ajuste manual fino (solo seguidores): cuadra a ojo con el timer del juego.
+      const nudge = i === 0 ? "" :
+        `<span class="nudge">` +
+        [-1, -0.5, 0.5, 1].map((d) =>
+          `<button data-idx="${i}" data-d="${d}" title="Ajustar ${d > 0 ? "+" : ""}${d}s">${d > 0 ? "+" : "−"}${Math.abs(d)}</button>`
+        ).join("") + `</span>`;
       cell.innerHTML =
         `<div id="player${i}"></div>` +
         `<div class="vidlabel">${tag}` +
         `<button class="star" data-idx="${i}" title="Principal: escuchar solo este">★</button>` +
-        `<button class="mute" data-idx="${i}" title="Silenciar este video">🔊</button></div>`;
+        `<button class="mute" data-idx="${i}" title="Silenciar este video">🔊</button>` +
+        nudge + `</div>`;
       stage.appendChild(cell);
 
       const isMaster = i === 0;
@@ -172,6 +194,9 @@ function buildPlayers(ids, pos) {
     );
     stage.querySelectorAll(".star").forEach((b) =>
       b.addEventListener("click", () => togglePrincipal(Number(b.dataset.idx)))
+    );
+    stage.querySelectorAll(".nudge button").forEach((b) =>
+      b.addEventListener("click", () => nudgeDelta(Number(b.dataset.idx), Number(b.dataset.d)))
     );
 
     window.__ytds = { players, deltas };
@@ -259,6 +284,18 @@ function seekTo(t) {
   for (let i = 1; i < players.length; i++) players[i].seekTo(Math.max(0, t - deltas[i]), true);
 }
 
+/** Ajuste manual fino del desfase de un seguidor (red de seguridad: cuadra a ojo
+ *  con el timer del juego). Reposiciona, marca la fuente como manual y persiste. */
+function nudgeDelta(i, d) {
+  if (i < 1 || !players[i] || !players[0]) return;
+  deltas[i] += d;
+  if (lastItems[i - 1]) { lastItems[i - 1].delta = deltas[i]; lastItems[i - 1].source = "manual"; }
+  players[i].seekTo(Math.max(0, players[0].getCurrentTime() - deltas[i]), true);
+  const tagEl = document.querySelectorAll(".cell .tag")[i];
+  if (tagEl) tagEl.innerHTML = `Δ ${deltas[i].toFixed(1)}s <span class="src">${sourceLabel(lastItems[i - 1])}</span>`;
+  if (currentKey && lastMaster) saveCache(currentKey, { master: lastMaster, items: lastItems });
+}
+
 function setMuteUI(i, muted) {
   const btn = document.querySelector(`.mute[data-idx="${i}"]`);
   if (btn) { btn.textContent = muted ? "🔇" : "🔊"; btn.classList.toggle("on", muted); }
@@ -290,11 +327,11 @@ function toggleFullscreen() {
   else document.documentElement.requestFullscreen().catch(() => {});
 }
 
-// Recalcular los desfases por audio en la posición actual (más preciso).
+// Recalcular los desfases (timer + audio) en la posición actual.
 async function resyncHere() {
   if (!ready() || !lastUrls.length) return;
   const pos = Math.round(players[0].getCurrentTime());
-  setStatus("Recalculando por audio en la posición actual…");
+  setStatus("Recalculando (timer + audio) en la posición actual…");
   try {
     const r = await fetch("/api/sync", {
       method: "POST",
@@ -305,14 +342,17 @@ async function resyncHere() {
     if (res.error) return setStatus("Error: " + res.error, "err");
     if (currentKey) saveCache(currentKey, res); // guardar los desfases refinados
     deltas = [0, ...res.items.map((it) => it.delta)];
-    // reposicionar seguidores y refrescar etiquetas
+    lastItems = res.items;
+    lastMaster = res.master;
+    // reposicionar seguidores y refrescar etiquetas con la fuente elegida
     const tags = document.querySelectorAll(".cell .tag");
     for (let i = 1; i < players.length; i++) {
       players[i].seekTo(Math.max(0, players[0].getCurrentTime() - deltas[i]), true);
-      if (tags[i]) tags[i].textContent = `Δ ${deltas[i].toFixed(1)}s`;
+      if (tags[i]) tags[i].innerHTML = `Δ ${deltas[i].toFixed(1)}s <span class="src">${sourceLabel(lastItems[i - 1])}</span>`;
     }
-    const confs = res.items.map((it) => it.confidence.toFixed(2)).join(", ");
-    setStatus(`Re-sincronizado · conf [${confs}]`, res.items.every((it) => it.confidence >= 0.25) ? "ok" : "");
+    const srcs = res.items.map((it) => it.source || "inicio").join(", ");
+    const allGood = res.items.every((it) => it.source === "timer" || it.source === "audio");
+    setStatus(`Re-sincronizado · fuentes [${srcs}]`, allGood ? "ok" : "");
   } catch (e) {
     setStatus("Error de red: " + e, "err");
   }

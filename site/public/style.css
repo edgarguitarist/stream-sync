@@ -113,6 +113,17 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 }
 .mute.on { background: rgba(255, 138, 128, 0.3); }
 .star.on { background: #e0a312; color: #111; } /* dorado = principal (solo este se oye) */
+.vidlabel .src { color: #9aa; }
+.nudge { display: inline-flex; gap: 2px; margin-left: 2px; }
+.nudge button {
+  padding: 2px 5px;
+  font-size: 11px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  background: rgba(255, 255, 255, 0.12);
+  color: #cfcfcf;
+}
+.nudge button:hover { background: rgba(120, 180, 255, 0.35); }
 
 /* --- Toolbar persistente (no se oculta): audio + pantalla completa -------- */
 #toolbar { display: none; }
